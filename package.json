@@ -1,21 +1,45 @@
 {
-  "name": "sudoku",
+  "name": "sudoku-pro",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Professional Sudoku Game for Steam",
+  "main": "src/main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "electron .",
+    "dev": "NODE_ENV=development electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/pau-ser/sudoku.git"
+  "build": {
+    "appId": "com.tuempresa.sudokupro",
+    "productName": "Sudoku Pro",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.puzzle-games"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Game"
+    }
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/pau-ser/sudoku/issues"
+  "dependencies": {
+    "greenworks": "^0.1.0"
   },
-  "homepage": "https://github.com/pau-ser/sudoku#readme"
+  "devDependencies": {
+    "electron": "^39.0.0"
+  }
 }
