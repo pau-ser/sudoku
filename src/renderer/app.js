@@ -1245,9 +1245,6 @@ style.textContent = `
       0% { transform: scale(0.8); opacity: 0; }
       100% { transform: scale(1); opacity: 1; }
   }
-  #board div[onclick] div {
-      animation: popIn 0.2s ease-out;
-  }
   /* Mejora para botones numéricos */
   button {
       transition: all 0.2s ease;
@@ -1832,7 +1829,6 @@ function renderGame() {
                     font-size: 20px; 
                     font-weight: bold; 
                     cursor: pointer; 
-                    transition: transform 0.1s;
                   " onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'">${num}</button>
                 `).join('')}
                 <button onclick="inputNumber(0)" style="background: rgba(239,68,68,0.8); color: white; padding: 16px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer;">✕</button>
