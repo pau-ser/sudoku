@@ -30,6 +30,7 @@ mongoose.connect(process.env.MONGODB_URI)
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/games', require('./routes/games'));
 app.use('/api/leaderboard', require('./routes/leaderboard'));
+app.use('/api/daily-challenge', require('./routes/dailyChallenge'));
 
 // Comentar temporalmente hasta que crees estos archivos
 // app.use('/api/tournament', require('./routes/tournament'));

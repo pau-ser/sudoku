@@ -95,6 +95,34 @@ class SudokuAPI {
   static async getDifficultyLeaderboard(difficulty) {
     return this.request(`/leaderboard/difficulty/${difficulty}`);
   }
+
+  static async getDailyChallenge() {
+    return this.request('/daily-challenge/today');
+  }
+
+  static async startDailyChallenge() {
+    return this.request('/daily-challenge/start', {
+      method: 'POST'
+    });
+  }
+
+  static async getDailyLeaderboard(date = null) {
+    const endpoint = date ? `/daily-challenge/leaderboard?date=${date}` : '/daily-challenge/leaderboard';
+    return this.request(endpoint);
+  }
+
+  static async getMyDailyRank(date = null) {
+    const endpoint = date ? `/daily-challenge/my-rank?date=${date}` : '/daily-challenge/my-rank';
+    return this.request(endpoint);
+  }
+
+  static async getMyDailyHistory() {
+    return this.request('/daily-challenge/my-history');
+  }
+
+  static async getDailyStats() {
+    return this.request('/daily-challenge/stats');
+  }
 }
 
 // Generador de Sudoku para modo offline
@@ -253,7 +281,7 @@ class SoundSystem {
   }
 }
 
-// Estado del juego actualizado para Opción 1
+// Estado del juego
 const gameState = {
   currentPuzzle: null,
   userBoard: null,
@@ -352,6 +380,23 @@ const gameState = {
     "dailyRankings": {}
   }`)
 };
+
+async function checkServerConnection() {
+  try {
+    const response = await fetch('http://localhost:3000/api/health', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    if (response.ok) {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('Servidor no disponible:', error.message);
+    return false;
+  }
+}
 
 const tournamentStructure = {
   chapters: [
@@ -581,31 +626,66 @@ function loadGame(id) {
   renderGame();
 }
 
-function getDailyChallenge() {
-  const today = new Date().toDateString();
-  
-  if (gameState.dailyChallenge && gameState.dailyChallenge.date === today) {
-    return gameState.dailyChallenge;
+async function getDailyChallenge() {
+  try {
+    if (gameState.isOnline) {
+      // Modo online - obtener del servidor
+      const dailyData = await SudokuAPI.getDailyChallenge();
+      
+      const today = new Date().toDateString();
+      
+      // Verificar si ya lo completamos hoy
+      const myRank = await SudokuAPI.getMyDailyRank().catch(() => null);
+      
+      const daily = {
+        date: today,
+        puzzle: {
+          puzzle: dailyData.puzzle,
+          solution: null, // No enviamos solución al cliente
+          clues: dailyData.clues
+        },
+        completed: myRank?.participated || false,
+        time: myRank?.time || null,
+        mistakes: myRank?.mistakes || null,
+        rank: myRank?.rank || null,
+        totalPlayers: dailyData.stats.totalPlayers,
+        avgTime: dailyData.stats.avgTime
+      };
+      
+      return daily;
+      
+    } else {
+      // Modo offline - generar localmente (código existente)
+      const today = new Date().toDateString();
+      
+      if (gameState.dailyChallenge && gameState.dailyChallenge.date === today) {
+        return gameState.dailyChallenge;
+      }
+      
+      const seedValue = new Date().getFullYear() * 10000 + 
+                        (new Date().getMonth() + 1) * 100 + 
+                        new Date().getDate();
+      
+      const generator = new SudokuGenerator();
+      const puzzle = generator.generate('hard', seedValue);
+      
+      const daily = {
+        date: today,
+        puzzle: puzzle,
+        completed: false,
+        time: null,
+        mistakes: null
+      };
+      
+      gameState.dailyChallenge = daily;
+      localStorage.setItem('sudoku-daily', JSON.stringify(daily));
+      return daily;
+    }
+  } catch (error) {
+    console.error('Error getting daily challenge:', error);
+    showNotification('❌ Error al obtener reto diario');
+    return null;
   }
-  
-  const seedValue = new Date().getFullYear() * 10000 + 
-                    (new Date().getMonth() + 1) * 100 + 
-                    new Date().getDate();
-  
-  const generator = new SudokuGenerator();
-  const puzzle = generator.generate('hard', seedValue);
-  
-  const daily = {
-    date: today,
-    puzzle: puzzle,
-    completed: false,
-    time: null,
-    mistakes: null
-  };
-  
-  gameState.dailyChallenge = daily;
-  localStorage.setItem('sudoku-daily', JSON.stringify(daily));
-  return daily;
 }
 
 function toggleTheme() {
@@ -784,23 +864,92 @@ async function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack =
     gameState.timeAttackMode = isTimeAttack;
     gameState.expertMode = isExpert;
     
-    if (isDailyChallenge) {
-      const daily = getDailyChallenge();
-      if (daily.completed) {
-        showNotification('Ya completaste el reto diario 🎉');
+    if (isDailyChallenge && gameState.isOnline) {
+      // CORREGIDO: Iniciar Daily Challenge online
+      try {
+        const response = await SudokuAPI.startDailyChallenge();
+        
+        console.log('Daily Challenge response:', response); // Debug
+        
+        // Verificar si ya lo completó
+        if (response.completed || response.error) {
+          showNotification(response.error || 'Ya completaste el reto diario');
+          
+          // Mostrar ranking en su lugar
+          setTimeout(() => {
+            showDailyChallengeLeaderboard();
+          }, 1500);
+          return;
+        }
+        
+        // Verificar que tenemos el puzzle
+        if (!response.puzzle || !Array.isArray(response.puzzle)) {
+          throw new Error('Respuesta del servidor inválida: no se recibió el puzzle');
+        }
+        
+        gameState.currentPuzzle = {
+          puzzle: response.puzzle,
+          solution: null, // No tenemos solución en el cliente por seguridad
+          clues: response.clues || response.puzzle.flat().filter(c => c !== 0).length
+        };
+        
+        gameState.userBoard = response.userBoard || response.puzzle.map(row => [...row]);
+        gameState.currentGameId = response.gameId;
+        gameState.difficulty = 'hard'; // Daily siempre es hard
+        
+        showNotification(`🏆 Reto Diario iniciado`);
+        
+      } catch (apiError) {
+        console.error('Error al iniciar Daily Challenge online:', apiError);
+        showNotification(`❌ Error: ${apiError.message}`);
+        
+        // Fallback: intentar cargar offline
+        showNotification('⚠️ Intentando modo offline...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const daily = await getDailyChallenge();
+        if (!daily) {
+          showNotification('❌ No se pudo cargar el reto diario');
+          return;
+        }
+        
+        gameState.currentPuzzle = daily.puzzle;
+        gameState.userBoard = daily.puzzle.puzzle.map(row => [...row]);
+        gameState.currentGameId = null;
+        gameState.isOnline = false; // Marcar como offline temporalmente
+        showNotification('📴 Jugando en modo offline');
+      }
+      
+    } else if (isDailyChallenge && !gameState.isOnline) {
+      // Daily Challenge offline
+      const daily = await getDailyChallenge();
+      if (!daily) {
+        showNotification('❌ Error al cargar reto diario');
         return;
       }
+      
+      if (daily.completed) {
+        showNotification('✅ Ya completaste el reto diario');
+        return;
+      }
+      
       gameState.currentPuzzle = daily.puzzle;
       gameState.userBoard = daily.puzzle.puzzle.map(row => [...row]);
       gameState.currentGameId = null;
-      showNotification(`🏆 Reto diario ${difficulty}`);
-    } else if (gameState.isOnline) {
+      showNotification('🏆 Reto Diario (offline)');
+      
+    } else if (gameState.isOnline && !isDailyChallenge) {
+      // Juego normal online
       const mode = isTimeAttack ? 'timeAttack' : isExpert ? 'expert' : 'normal';
       
       const response = await SudokuAPI.createGame({
         difficulty,
         mode
       });
+      
+      if (!response.puzzle) {
+        throw new Error('No se recibió el puzzle del servidor');
+      }
       
       gameState.currentPuzzle = {
         puzzle: response.puzzle,
@@ -812,13 +961,20 @@ async function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack =
       gameState.expertMode = response.expertMode || false;
       gameState.timeAttackLimit = response.timeAttackLimit || 600;
       
-      showNotification(`🎮 Nuevo juego ${difficulty} creado online`);
+      showNotification(`🎮 Nuevo juego ${difficulty}`);
+      
     } else {
+      // Juego offline normal
       const generator = new SudokuGenerator();
       gameState.currentPuzzle = generator.generate(difficulty);
       gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
       gameState.currentGameId = null;
       showNotification(`🎮 Nuevo juego ${difficulty} (offline)`);
+    }
+    
+    // Verificar que tenemos un puzzle válido antes de continuar
+    if (!gameState.currentPuzzle || !gameState.currentPuzzle.puzzle) {
+      throw new Error('No se pudo inicializar el puzzle correctamente');
     }
     
     // Reiniciar estado del juego
@@ -854,12 +1010,21 @@ async function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack =
     console.error('Error starting new game:', error);
     showNotification(`❌ Error: ${error.message}`);
     
-    // Fallback a modo offline
-    const generator = new SudokuGenerator();
-    gameState.currentPuzzle = generator.generate(difficulty);
-    gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
-    gameState.currentGameId = null;
-    renderGame();
+    // Último fallback: generar offline
+    if (!isDailyChallenge) {
+      try {
+        const generator = new SudokuGenerator();
+        gameState.currentPuzzle = generator.generate(difficulty);
+        gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
+        gameState.currentGameId = null;
+        gameState.isOnline = false;
+        showNotification('📴 Continuando en modo offline');
+        renderGame();
+      } catch (fallbackError) {
+        showNotification('❌ Error crítico al iniciar juego');
+        console.error('Fallback error:', fallbackError);
+      }
+    }
   }
 }
 
@@ -1137,13 +1302,14 @@ function cleanRelatedNotes(row, col, num) {
   }
 }
 
-function checkWin() {
-  // En modo online, el servidor se encarga de verificar victoria
+async function checkWin() {
   if (gameState.isOnline && gameState.currentGameId) {
+    // En modo online, el servidor verifica la victoria automáticamente
+    // cuando hacemos el último movimiento correcto
     return;
   }
   
-  // En modo offline, verificar localmente solo si tenemos solución
+  // Modo offline - verificar localmente
   if (gameState.currentPuzzle && gameState.currentPuzzle.solution) {
     const isComplete = gameState.userBoard.every((row, i) => 
       row.every((cell, j) => cell === gameState.currentPuzzle.solution[i][j])
@@ -1152,11 +1318,9 @@ function checkWin() {
     if (isComplete) {
       clearInterval(gameState.timerInterval);
       
-      // Verificar si estamos en modo torneo
+      // Verificar si es modo torneo
       if (gameState.currentTournamentLevel) {
         const level = gameState.currentTournamentLevel;
-        
-        // Verificar si se cumplen los requisitos del nivel
         const withinMistakeLimit = gameState.mistakes < level.requiredMistakes;
         const withinTimeLimit = gameState.timer <= level.timeLimit;
         
@@ -1170,9 +1334,24 @@ function checkWin() {
           showTournamentLevelResult(false, message);
         }
       } else {
+        // Actualizar estadísticas y mostrar victoria
         updateStatsAfterWin();
         gameState.sound.complete();
-        showWinScreen();
+        
+        // Si es Daily Challenge offline, mostrar opción de ver ranking
+        if (gameState.dailyChallenge && 
+            gameState.dailyChallenge.date === new Date().toDateString() &&
+            !gameState.dailyChallenge.completed) {
+          
+          gameState.dailyChallenge.completed = true;
+          gameState.dailyChallenge.time = gameState.timer;
+          gameState.dailyChallenge.mistakes = gameState.mistakes;
+          localStorage.setItem('sudoku-daily', JSON.stringify(gameState.dailyChallenge));
+          
+          showDailyChallengeWinScreen();
+        } else {
+          showWinScreen();
+        }
       }
     }
   }
@@ -1760,7 +1939,7 @@ function renderMenu() {
           <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">🎮 Nueva Partida</h2>
             <div style="display: flex; flex-direction: column; gap: 12px;">
-              <button onclick="startNewGame('hard', true)" style="
+              <button onclick="showDailyChallengeMenu()" style="
                 background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
                 color: white;
                 padding: 15px 20px;
@@ -3999,8 +4178,43 @@ function renderTournamentGame(level, isBoss = false) {
                 </div>
               </div>
             </div>
-
-            <!-- Resto del código igual... -->
+            <!-- Recompensas de estrellas -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="color: ${theme.text}; margin-bottom: 15px;">⭐ Recompensas</h3>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${level.stars.map((starTime, index) => {
+                  const starsEarned = calculateEarnedStars(level, gameState.timer, gameState.mistakes);
+                  const isUnlocked = starsEarned > index;
+                  const currentTime = gameState.timer;
+                  
+                  return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="color: ${isUnlocked ? '#fbbf24' : '#6b7280'}; font-size: 16px;">
+                          ${isUnlocked ? '⭐' : '☆'}
+                        </span>
+                        <span style="color: ${theme.text}; font-size: 14px;">
+                          ${index + 1} estrella${index > 0 ? 's' : ''}
+                        </span>
+                      </div>
+                      <span style="color: ${currentTime <= starTime ? '#10b981' : '#6b7280'}; font-size: 12px; font-family: monospace;">
+                        < ${formatTime(starTime)}
+                      </span>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+            <!-- Reglas especiales -->
+            ${isBoss ? `
+            <div style="background: rgba(245, 158, 11, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(245, 158, 11, 0.3);">
+              <h3 style="color: #f59e0b; margin-bottom: 10px;">⚡ Reglas del Boss</h3>
+              <div style="color: #f59e0b; opacity: 0.9; font-size: 13px; line-height: 1.4;">
+                ${level.specialRule}
+              </div>
+            </div>
+            ` : ''}
+          </div>
           </div>
         </div>
       </div>
@@ -4174,6 +4388,396 @@ function showTournamentLevelResult(success, message) {
             border: none;
             border-radius: 15px;
             font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+          " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🏠 Menú Principal</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function showDailyChallengeLeaderboard() {
+  try {
+    const leaderboardData = await SudokuAPI.getDailyLeaderboard();
+    const myRank = await SudokuAPI.getMyDailyRank();
+    
+    const theme = themes[gameState.theme];
+    const root = document.getElementById('root');
+    
+    root.innerHTML = `
+      <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
+        <div style="max-width: 1000px; margin: 0 auto;">
+          <!-- Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer;">← Volver</button>
+            <h1 style="color: ${theme.text}; margin: 0;">🏆 Reto Diario - ${leaderboardData.date}</h1>
+            <div style="width: 100px;"></div>
+          </div>
+          
+          <!-- Estadísticas del día -->
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px;">
+            <div style="background: ${theme.cardBg}; padding: 20px; border-radius: 15px; text-align: center;">
+              <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">${leaderboardData.stats.totalParticipants}</div>
+              <div style="color: ${theme.text}; opacity: 0.8; font-size: 14px;">Participantes</div>
+            </div>
+            <div style="background: ${theme.cardBg}; padding: 20px; border-radius: 15px; text-align: center;">
+              <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">${leaderboardData.stats.completedParticipants}</div>
+              <div style="color: ${theme.text}; opacity: 0.8; font-size: 14px;">Completados</div>
+            </div>
+            <div style="background: ${theme.cardBg}; padding: 20px; border-radius: 15px; text-align: center;">
+              <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">${leaderboardData.stats.completionRate}%</div>
+              <div style="color: ${theme.text}; opacity: 0.8; font-size: 14px;">Tasa de éxito</div>
+            </div>
+          </div>
+          
+          <!-- Tu posición -->
+          ${myRank.participated ? `
+          <div style="background: linear-gradient(135deg, #f59e0b, #d97706); padding: 25px; border-radius: 20px; margin-bottom: 30px; color: white; text-align: center;">
+            <div style="font-size: 18px; margin-bottom: 10px;">Tu Posición</div>
+            <div style="font-size: 48px; font-weight: bold; margin-bottom: 10px;">#${myRank.rank}</div>
+            <div style="display: flex; justify-content: center; gap: 30px; font-size: 14px;">
+              <div>⏱️ ${formatTime(myRank.time)}</div>
+              <div>❌ ${myRank.mistakes} errores</div>
+              <div>💡 ${myRank.hintsUsed} pistas</div>
+              <div>📊 Top ${myRank.percentile}%</div>
+            </div>
+          </div>
+          ` : `
+          <div style="background: rgba(239,68,68,0.2); padding: 25px; border-radius: 20px; margin-bottom: 30px; color: ${theme.text}; text-align: center;">
+            <div style="font-size: 18px; margin-bottom: 10px;">❌ No has completado el reto de hoy</div>
+            <button onclick="startNewGame('hard', true)" style="
+              background: linear-gradient(135deg, #f59e0b, #d97706);
+              color: white;
+              padding: 15px 30px;
+              border: none;
+              border-radius: 12px;
+              font-size: 16px;
+              font-weight: bold;
+              cursor: pointer;
+              margin-top: 10px;
+            ">🎮 Jugar Ahora</button>
+          </div>
+          `}
+          
+          <!-- Ranking -->
+          <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 20px;">
+            <h2 style="color: ${theme.text}; margin-bottom: 20px;">🏅 Top ${leaderboardData.leaderboard.length}</h2>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              ${leaderboardData.leaderboard.map((entry, idx) => `
+                <div style="
+                  background: ${entry.userId === gameState.user?.id ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.05)'}; 
+                  padding: 15px 20px; 
+                  border-radius: 12px; 
+                  display: flex; 
+                  justify-content: space-between; 
+                  align-items: center;
+                  ${entry.userId === gameState.user?.id ? 'border: 2px solid #f59e0b;' : ''}
+                ">
+                  <div style="display: flex; align-items: center; gap: 15px;">
+                    <div style="font-size: 24px; font-weight: bold; color: ${idx < 3 ? '#fbbf24' : theme.text}; min-width: 40px;">
+                      ${idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`}
+                    </div>
+                    <div style="font-size: 24px;">${entry.avatar}</div>
+                    <div style="color: ${theme.text};">
+                      <div style="font-weight: bold; font-size: 16px;">
+                        ${entry.username} ${entry.userId === gameState.user?.id ? '(Tú)' : ''}
+                      </div>
+                      <div style="font-size: 12px; opacity: 0.8;">Nivel ${entry.level}</div>
+                    </div>
+                  </div>
+                  <div style="text-align: right; color: ${theme.text};">
+                    <div style="font-size: 20px; font-weight: bold;">⏱️ ${formatTime(entry.time)}</div>
+                    <div style="font-size: 12px; opacity: 0.8;">❌ ${entry.mistakes} • 💡 ${entry.hintsUsed}</div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Error showing daily leaderboard:', error);
+    showNotification('❌ Error al cargar ranking');
+  }
+}
+
+async function showDailyChallengeMenu() {
+  try {
+    // Verificar conexión primero
+    if (gameState.isOnline) {
+      const isConnected = await checkServerConnection();
+      if (!isConnected) {
+        showNotification('⚠️ Servidor no disponible, usando modo offline');
+        gameState.isOnline = false;
+      }
+    }
+    
+    const dailyData = await getDailyChallenge();
+    
+    if (!dailyData) {
+      showNotification('❌ Error al cargar reto diario');
+      renderMenu();
+      return;
+    }
+    
+    const theme = themes[gameState.theme];
+    const root = document.getElementById('root');
+    
+    root.innerHTML = `
+      <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
+        <div style="max-width: 800px; margin: 0 auto;">
+          <div style="text-align: center; margin-bottom: 40px;">
+            <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer; position: absolute; left: 20px;">← Volver</button>
+            <h1 style="color: ${theme.text}; font-size: 48px; margin: 0 0 10px 0;">🏆 Reto Diario</h1>
+            <p style="color: ${theme.text}; opacity: 0.8; font-size: 18px;">
+              ${new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
+            ${!gameState.isOnline ? `
+              <div style="background: rgba(239,68,68,0.2); padding: 10px 20px; border-radius: 10px; margin-top: 15px; display: inline-block;">
+                <span style="color: ${theme.text};">📴 Modo Offline</span>
+              </div>
+            ` : ''}
+          </div>
+          
+          <!-- Estadísticas del día -->
+          <div style="background: ${theme.cardBg}; padding: 30px; border-radius: 20px; margin-bottom: 30px;">
+            <h2 style="color: ${theme.text}; margin-bottom: 20px;">📊 Estadísticas de Hoy</h2>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+              <div style="text-align: center;">
+                <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">
+                  ${dailyData?.totalPlayers || 0}
+                </div>
+                <div style="color: ${theme.text}; opacity: 0.8;">Jugadores</div>
+              </div>
+              <div style="text-align: center;">
+                <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">
+                  ${dailyData?.avgTime ? formatTime(dailyData.avgTime) : '--:--'}
+                </div>
+                <div style="color: ${theme.text}; opacity: 0.8;">Tiempo promedio</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Acciones -->
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            ${dailyData?.completed ? `
+              <div style="background: linear-gradient(135deg, #10b981, #059669); padding: 30px; border-radius: 20px; text-align: center; color: white;">
+                <div style="font-size: 24px; margin-bottom: 15px;">✅ ¡Reto Completado!</div>
+                ${dailyData.rank ? `<div style="font-size: 18px; margin-bottom: 10px;">Posición: #${dailyData.rank}</div>` : ''}
+                <div style="display: flex; justify-content: center; gap: 20px; font-size: 16px;">
+                  <div>⏱️ ${formatTime(dailyData.time)}</div>
+                  <div>❌ ${dailyData.mistakes}</div>
+                </div>
+              </div>
+            ` : `
+              <button onclick="startNewGame('hard', true)" style="
+                background: linear-gradient(135deg, #f59e0b, #d97706);
+                color: white;
+                padding: 25px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 22px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                🎮 Jugar Reto Diario
+              </button>
+            `}
+            
+            ${gameState.isOnline ? `
+              <button onclick="showDailyChallengeLeaderboard()" style="
+                background: ${theme.cardBg};
+                color: ${theme.text};
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 18px;
+                font-weight: bold;
+                cursor: pointer;
+              ">🏅 Ver Ranking Global</button>
+              
+              <button onclick="showMyDailyHistory()" style="
+                background: ${theme.cardBg};
+                color: ${theme.text};
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 18px;
+                font-weight: bold;
+                cursor: pointer;
+              ">📜 Mi Historial</button>
+            ` : `
+              <div style="background: rgba(239,68,68,0.1); padding: 20px; border-radius: 15px; text-align: center; color: ${theme.text};">
+                <div style="font-size: 16px; margin-bottom: 10px;">🔌 Modo Offline</div>
+                <div style="opacity: 0.8; font-size: 14px;">Inicia sesión online para acceder al ranking global</div>
+              </div>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Error showing daily challenge menu:', error);
+    showNotification('❌ Error al cargar reto diario');
+    renderMenu();
+  }
+}
+
+async function showMyDailyHistory() {
+  try {
+    const historyData = await SudokuAPI.getMyDailyHistory();
+    const theme = themes[gameState.theme];
+    const root = document.getElementById('root');
+    
+    root.innerHTML = `
+      <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
+        <div style="max-width: 1000px; margin: 0 auto;">
+          <!-- Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <button onclick="showDailyChallengeMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer;">← Volver</button>
+            <h1 style="color: ${theme.text}; margin: 0;">📜 Mi Historial de Retos Diarios</h1>
+            <div style="width: 100px;"></div>
+          </div>
+          
+          <!-- Resumen -->
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">
+            <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 15px; text-align: center;">
+              <div style="color: ${theme.text}; font-size: 48px; font-weight: bold;">${historyData.currentStreak} 🔥</div>
+              <div style="color: ${theme.text}; opacity: 0.8; font-size: 16px;">Racha Actual</div>
+            </div>
+            <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 15px; text-align: center;">
+              <div style="color: ${theme.text}; font-size: 48px; font-weight: bold;">${historyData.totalCompleted}</div>
+              <div style="color: ${theme.text}; opacity: 0.8; font-size: 16px;">Total Completados</div>
+            </div>
+          </div>
+          
+          <!-- Historial -->
+          <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 20px;">
+            <h2 style="color: ${theme.text}; margin-bottom: 20px;">📅 Historial</h2>
+            ${historyData.history.length === 0 ? `
+              <div style="text-align: center; color: ${theme.text}; opacity: 0.6; padding: 40px;">
+                No hay historial aún. ¡Completa tu primer reto diario!
+              </div>
+            ` : `
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                ${historyData.history.map((entry, idx) => {
+                  const date = new Date(entry.dailyChallengeDate);
+                  const isToday = date.toDateString() === new Date().toDateString();
+                  const dateStr = isToday ? 'Hoy' : date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+                  
+                  return `
+                    <div style="
+                      background: ${isToday ? 'rgba(245,158,11,0.1)' : 'rgba(255,255,255,0.05)'}; 
+                      padding: 20px; 
+                      border-radius: 12px; 
+                      display: flex; 
+                      justify-content: space-between; 
+                      align-items: center;
+                      ${isToday ? 'border: 2px solid #f59e0b;' : ''}
+                    ">
+                      <div style="display: flex; align-items: center; gap: 20px;">
+                        <div style="color: ${theme.text}; font-weight: bold; font-size: 16px; min-width: 100px;">
+                          ${dateStr}
+                        </div>
+                        <div style="color: ${theme.text}; opacity: 0.8; font-size: 14px;">
+                          ${new Date(entry.completedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      <div style="display: flex; gap: 30px; align-items: center;">
+                        <div style="color: ${theme.text}; text-align: center;">
+                          <div style="font-size: 18px; font-weight: bold;">⏱️ ${formatTime(entry.time)}</div>
+                          <div style="font-size: 11px; opacity: 0.7;">Tiempo</div>
+                        </div>
+                        <div style="color: ${theme.text}; text-align: center;">
+                          <div style="font-size: 18px; font-weight: bold;">❌ ${entry.mistakes}</div>
+                          <div style="font-size: 11px; opacity: 0.7;">Errores</div>
+                        </div>
+                        <div style="color: ${theme.text}; text-align: center;">
+                          <div style="font-size: 18px; font-weight: bold;">💡 ${entry.hintsUsed}</div>
+                          <div style="font-size: 11px; opacity: 0.7;">Pistas</div>
+                        </div>
+                        <div style="color: #fbbf24; text-align: center;">
+                          <div style="font-size: 18px; font-weight: bold;">${entry.score}</div>
+                          <div style="font-size: 11px; opacity: 0.7;">Puntos</div>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Error showing daily history:', error);
+    showNotification('❌ Error al cargar historial');
+  }
+}
+
+function showDailyChallengeWinScreen() {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="min-height: 100vh; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="max-width: 700px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 60px; border: 1px solid rgba(255,255,255,0.2); text-align: center;">
+        <div style="font-size: 120px; margin-bottom: 30px; animation: bounce 1s;">🏆</div>
+        <h1 style="font-size: 60px; font-weight: bold; color: white; margin: 0 0 20px 0;">¡Reto Diario Completado!</h1>
+        <div style="font-size: 24px; color: rgba(255,255,255,0.9); margin-bottom: 40px;">
+          ${new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 40px;">
+          <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 20px;">
+            <div style="font-size: 40px; font-weight: bold; color: white;">${formatTime(gameState.timer)}</div>
+            <div style="color: rgba(255,255,255,0.8); font-size: 14px;">Tiempo</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 20px;">
+            <div style="font-size: 40px; font-weight: bold; color: white;">${gameState.mistakes}</div>
+            <div style="color: rgba(255,255,255,0.8); font-size: 14px;">Errores</div>
+          </div>
+        </div>
+
+        ${gameState.isOnline ? `
+          <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 20px; margin-bottom: 30px; color: white;">
+            <div style="font-size: 18px; margin-bottom: 10px;">💡 Conectado Online</div>
+            <div style="opacity: 0.9;">Tu resultado se ha guardado en el ranking global</div>
+          </div>
+        ` : `
+          <div style="background: rgba(239,68,68,0.2); padding: 20px; border-radius: 20px; margin-bottom: 30px; color: white;">
+            <div style="font-size: 18px; margin-bottom: 10px;">🔌 Modo Offline</div>
+            <div style="opacity: 0.9;">Inicia sesión para competir en el ranking global</div>
+          </div>
+        `}
+
+        <div style="display: flex; flex-direction: column; gap: 15px;">
+          ${gameState.isOnline ? `
+            <button onclick="showDailyChallengeLeaderboard()" style="
+              background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+              color: white;
+              padding: 20px 40px;
+              border: none;
+              border-radius: 15px;
+              font-size: 20px;
+              font-weight: bold;
+              cursor: pointer;
+              transition: transform 0.2s;
+            " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🏅 Ver Ranking Global</button>
+          ` : ''}
+          
+          <button onclick="renderMenu()" style="
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
             font-weight: bold;
             cursor: pointer;
             transition: transform 0.2s;

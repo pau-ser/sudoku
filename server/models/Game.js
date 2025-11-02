@@ -32,6 +32,8 @@ const gameSchema = new mongoose.Schema({
   
   // Para desafíos
   dailyChallengeDate: { type: String }, // "2025-11-02"
+  dailyChallengeSeed: { type: Number }, // Seed único del día
+  dailyRank: { type: Number }, // Posición en el ranking del día
   tournamentLevel: { type: String }, // "1-1"
   battleRoyaleId: { type: mongoose.Schema.Types.ObjectId, ref: 'BattleRoyale' },
   
@@ -45,6 +47,8 @@ gameSchema.index({ userId: 1, createdAt: -1 });
 gameSchema.index({ difficulty: 1, time: 1 });
 gameSchema.index({ dailyChallengeDate: 1, time: 1 });
 gameSchema.index({ completed: 1, lastActivity: 1 });
+gameSchema.index({ dailyChallengeDate: 1, completed: 1, time: 1 });
+gameSchema.index({ dailyChallengeDate: 1, score: -1 });
 
 // Método para verificar si el juego está completado
 gameSchema.methods.checkCompletion = function() {
