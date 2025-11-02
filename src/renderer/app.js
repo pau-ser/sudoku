@@ -1,4 +1,3 @@
-// app.js - Versión completa con integración API (Opción 1)
 
 // API Client
 class SudokuAPI {
@@ -352,6 +351,68 @@ const gameState = {
     "bestDailyTime": null,
     "dailyRankings": {}
   }`)
+};
+
+const tournamentStructure = {
+  chapters: [
+    {
+      id: 1,
+      name: "Aprendiz del Sudoku",
+      description: "Domina los fundamentos",
+      levels: [
+        { id: 1, difficulty: 'easy', timeLimit: 600, requiredMistakes: 5, stars: [180, 300, 420] },
+        { id: 2, difficulty: 'easy', timeLimit: 480, requiredMistakes: 4, stars: [150, 240, 360] },
+        { id: 3, difficulty: 'easy', timeLimit: 360, requiredMistakes: 3, stars: [120, 200, 300] },
+        { id: 4, difficulty: 'medium', timeLimit: 600, requiredMistakes: 4, stars: [240, 400, 540] },
+        { id: 5, difficulty: 'medium', timeLimit: 480, requiredMistakes: 3, stars: [200, 320, 440] }
+      ],
+      boss: {
+        difficulty: 'hard',
+        timeLimit: 600,
+        requiredMistakes: 2,
+        specialRule: "Sin pistas permitidas",
+        stars: [300, 450, 570]
+      }
+    },
+    {
+      id: 2,
+      name: "Maestro de la Lógica", 
+      description: "Perfecciona tu técnica",
+      levels: [
+        { id: 6, difficulty: 'medium', timeLimit: 420, requiredMistakes: 3, stars: [180, 280, 380] },
+        { id: 7, difficulty: 'hard', timeLimit: 600, requiredMistakes: 3, stars: [300, 450, 550] },
+        { id: 8, difficulty: 'hard', timeLimit: 480, requiredMistakes: 2, stars: [240, 360, 450] },
+        { id: 9, difficulty: 'expert', timeLimit: 720, requiredMistakes: 3, stars: [420, 580, 680] },
+        { id: 10, difficulty: 'expert', timeLimit: 600, requiredMistakes: 2, stars: [360, 500, 580] }
+      ],
+      boss: {
+        difficulty: 'master', 
+        timeLimit: 600,
+        requiredMistakes: 1,
+        specialRule: "Modo experto activado",
+        stars: [420, 540, 600]
+      }
+    },
+    {
+      id: 3,
+      name: "Leyenda del Sudoku",
+      description: "El desafío definitivo",
+      levels: [
+        { id: 11, difficulty: 'expert', timeLimit: 480, requiredMistakes: 2, stars: [300, 400, 460] },
+        { id: 12, difficulty: 'master', timeLimit: 660, requiredMistakes: 2, stars: [420, 540, 620] },
+        { id: 13, difficulty: 'master', timeLimit: 540, requiredMistakes: 1, stars: [360, 460, 520] },
+        { id: 14, difficulty: 'master', timeLimit: 480, requiredMistakes: 1, stars: [300, 400, 450] },
+        { id: 15, difficulty: 'master', timeLimit: 420, requiredMistakes: 0, stars: [240, 330, 390] }
+      ],
+      boss: {
+        difficulty: 'master',
+        timeLimit: 480, 
+        requiredMistakes: 0,
+        specialRule: "Contrarreloj + Modo experto",
+        stars: [300, 400, 450]
+      }
+    }
+  ]
 };
 
 // Sistema de escalado responsivo
@@ -996,6 +1057,24 @@ function cleanRelatedNotes(row, col, num) {
 }
 
 function checkWin() {
+  if (gameState.currentPuzzle && gameState.currentPuzzle.solution) {
+    const isComplete = gameState.userBoard.every((row, i) => 
+      row.every((cell, j) => cell === gameState.currentPuzzle.solution[i][j])
+    );
+    
+    if (isComplete) {
+      clearInterval(gameState.timerInterval);
+      
+      // Verificar si estamos en modo torneo
+      if (gameState.currentTournamentLevel) {
+        showTournamentLevelResult(true, "¡Nivel completado con éxito!");
+      } else {
+        updateStatsAfterWin();
+        gameState.sound.complete();
+        showWinScreen();
+      }
+    }
+  }
   // En modo online, el servidor se encarga de verificar victoria
   if (gameState.isOnline && gameState.currentGameId) {
     return;
@@ -1648,6 +1727,19 @@ function renderMenu() {
                 transition: transform 0.2s;
               " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
                 💪 Modo Experto
+              </button>
+              <button onclick="showTournamentMenu()" style="
+                background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+                color: white;
+                padding: 15px 20px;
+                border: none;
+                border-radius: 12px;
+                font-size: 15px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
+                🏆 Modo Torneo
               </button>
               <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 10px; font-size: 13px; color: rgba(255,255,255,0.8); line-height: 1.4;">
                 <strong>Experto:</strong> Sin pistas ni deshacer
@@ -2902,6 +2994,1029 @@ function renderImprovementTimeline() {
     <div style="display: flex; justify-content: space-between; margin-top: 10px; color: rgba(255,255,255,0.6); font-size: 12px;">
       <div>Mejor: ${formatTime(minTime)}</div>
       <div>Peor: ${formatTime(maxTime)}</div>
+    </div>
+  `;
+}
+
+// Funciones Torneos 
+function startTournamentLevel(chapterId, levelId, isBoss = false) {
+  const chapter = tournamentStructure.chapters.find(c => c.id === chapterId);
+  if (!chapter) return;
+  
+  const level = isBoss ? chapter.boss : chapter.levels.find(l => l.id === levelId);
+  if (!level) return;
+  
+  // Configurar el nivel
+  gameState.difficulty = level.difficulty;
+  gameState.timeAttackMode = true;
+  gameState.timeAttackLimit = level.timeLimit;
+  gameState.expertMode = level.specialRule?.includes("Modo experto") || false;
+  
+  // Reiniciar estado del juego
+  gameState.selectedCell = null;
+  gameState.timer = 0;
+  gameState.mistakes = 0;
+  gameState.hintsUsed = 0;
+  gameState.moveHistory = [];
+  gameState.notes = {};
+  gameState.notesMode = false;
+  
+  // Limpiar timer anterior
+  if (gameState.timerInterval) {
+    clearInterval(gameState.timerInterval);
+  }
+  
+  // Generar puzzle
+  const generator = new SudokuGenerator();
+  gameState.currentPuzzle = generator.generate(level.difficulty);
+  gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
+  
+  // Iniciar timer especial para torneo
+  gameState.timerInterval = setInterval(() => {
+    gameState.timer++;
+    
+    // Verificar si se agotó el tiempo
+    if (gameState.timer >= level.timeLimit) {
+      clearInterval(gameState.timerInterval);
+      showTournamentLevelResult(false, "¡Tiempo agotado!");
+      return;
+    }
+    
+    updateTimer();
+  }, 1000);
+  
+  gameState.sound.click();
+  renderTournamentGame(level, isBoss);
+}
+
+function renderTournamentGame(level, isBoss = false) {
+  const theme = themes[gameState.theme];
+  const timeLeft = level.timeLimit - gameState.timer;
+  const timeWarning = timeLeft < 60;
+  
+  const root = document.getElementById('root');
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.bg}; padding: 10px; overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;">
+      <div style="max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; overflow-y: auto;">
+        <div style="display: grid; grid-template-columns: 1fr 300px; gap: 15px; height: 100%;">
+          
+          <!-- Columna izquierda: Tablero -->
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            <!-- Header del torneo -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 10px 15px; border-radius: 10px; cursor: pointer; font-size: 14px;">← Volver</button>
+                <div style="text-align: center; color: ${theme.text};">
+                  <div style="font-size: 18px; font-weight: bold;">${isBoss ? '👑 ' : ''}Nivel ${level.id}</div>
+                  <div style="font-size: 12px; opacity: 0.8;">${level.difficulty.toUpperCase()}</div>
+                </div>
+                <div style="width: 100px; text-align: right;">
+                  <div style="font-size: 24px; font-weight: bold; color: ${timeWarning ? '#ef4444' : theme.text};">
+                    ${formatTime(timeLeft)}
+                  </div>
+                </div>
+              </div>
+              
+              ${isBoss ? `
+              <div style="background: linear-gradient(135deg, #f59e0b, #d97706); padding: 10px; border-radius: 10px; text-align: center; color: white; font-weight: bold;">
+                👑 BOSS BATTLE: ${level.specialRule}
+              </div>
+              ` : ''}
+              
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 15px;">
+                <div style="text-align: center;">
+                  <div style="color: ${theme.text}; font-size: 12px;">Errores</div>
+                  <div style="color: ${gameState.mistakes >= level.requiredMistakes ? '#ef4444' : '#10b981'}; font-size: 18px; font-weight: bold;">
+                    ${gameState.mistakes}/${level.requiredMistakes}
+                  </div>
+                </div>
+                <div style="text-align: center;">
+                  <div style="color: ${theme.text}; font-size: 12px;">Vidas</div>
+                  <div style="color: ${theme.text}; font-size: 18px; font-weight: bold;">${gameState.tournamentProgress.lives} ❤️</div>
+                </div>
+                <div style="text-align: center;">
+                  <div style="color: ${theme.text}; font-size: 12px;">Estrellas</div>
+                  <div style="color: #fbbf24; font-size: 18px; font-weight: bold;">
+                    ${calculateEarnedStars(level, gameState.timer, gameState.mistakes)}/3 ⭐
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tablero -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 12px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: flex; justify-content: center;">
+                <div id="board"></div>
+              </div>
+            </div>
+
+            <!-- Controles -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;">
+                ${[1,2,3,4,5,6,7,8,9].map(num => `
+                  <button onclick="inputNumber(${num})" style="
+                    background: rgba(102, 126, 234, 0.8); 
+                    color: white; 
+                    padding: 16px; 
+                    border: none; 
+                    border-radius: 10px; 
+                    font-size: 20px; 
+                    font-weight: bold; 
+                    cursor: pointer; 
+                  ">${num}</button>
+                `).join('')}
+                <button onclick="inputNumber(0)" style="background: rgba(239,68,68,0.8); color: white; padding: 16px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer;">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Columna derecha: Información del nivel -->
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            <!-- Objetivos -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="color: ${theme.text}; margin-bottom: 15px;">🎯 Objetivos</h3>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: ${theme.text}; font-size: 14px;">Completar el sudoku</span>
+                  <span style="color: #10b981; font-size: 18px;">✓</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: ${theme.text}; font-size: 14px;">Menos de ${level.requiredMistakes} errores</span>
+                  <span style="color: ${gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444'}; font-size: 18px;">
+                    ${gameState.mistakes < level.requiredMistakes ? '✓' : '✗'}
+                  </span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: ${theme.text}; font-size: 14px;">Dentro del tiempo límite</span>
+                  <span style="color: ${timeLeft > 0 ? '#10b981' : '#ef4444'}; font-size: 18px;">
+                    ${timeLeft > 0 ? '✓' : '✗'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recompensas de estrellas -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="color: ${theme.text}; margin-bottom: 15px;">⭐ Recompensas</h3>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${level.stars.map((starTime, index) => {
+                  const starsEarned = calculateEarnedStars(level, gameState.timer, gameState.mistakes);
+                  const isUnlocked = starsEarned > index;
+                  const currentTime = gameState.timer;
+                  
+                  return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="color: ${isUnlocked ? '#fbbf24' : '#6b7280'}; font-size: 16px;">
+                          ${isUnlocked ? '⭐' : '☆'}
+                        </span>
+                        <span style="color: ${theme.text}; font-size: 14px;">
+                          ${index + 1} estrella${index > 0 ? 's' : ''}
+                        </span>
+                      </div>
+                      <span style="color: ${currentTime <= starTime ? '#10b981' : '#6b7280'}; font-size: 12px; font-family: monospace;">
+                        < ${formatTime(starTime)}
+                      </span>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Reglas especiales -->
+            ${isBoss ? `
+            <div style="background: rgba(245, 158, 11, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(245, 158, 11, 0.3);">
+              <h3 style="color: #f59e0b; margin-bottom: 10px;">⚡ Reglas del Boss</h3>
+              <div style="color: rgba(245, 158, 11, 0.9); font-size: 13px; line-height: 1.4;">
+                ${level.specialRule}
+              </div>
+            </div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  renderBoard();
+}
+
+function calculateEarnedStars(level, time, mistakes) {
+  if (mistakes >= level.requiredMistakes) return 0;
+  
+  if (time <= level.stars[0]) return 3;
+  if (time <= level.stars[1]) return 2;
+  if (time <= level.stars[2]) return 1;
+  return 0;
+}
+
+function showTournamentLevelResult(success, message) {
+  const level = getCurrentLevel();
+  const starsEarned = success ? calculateEarnedStars(level, gameState.timer, gameState.mistakes) : 0;
+  
+  if (success) {
+    // Registrar victoria
+    const levelCompletion = {
+      levelId: level.id,
+      stars: starsEarned,
+      time: gameState.timer,
+      mistakes: gameState.mistakes,
+      date: new Date().toISOString()
+    };
+    
+    if (!gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id)) {
+      gameState.tournamentProgress.completedLevels.push(levelCompletion);
+    } else {
+      // Actualizar si mejoró el resultado
+      const existing = gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id);
+      if (starsEarned > existing.stars) {
+        existing.stars = starsEarned;
+        existing.time = gameState.timer;
+        existing.mistakes = gameState.mistakes;
+      }
+    }
+    
+    gameState.tournamentProgress.totalScore += starsEarned * 100;
+    
+  } else {
+    // Registrar derrota - perder vida
+    gameState.tournamentProgress.lives--;
+  }
+  
+  saveStats();
+  
+  // Mostrar pantalla de resultado
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${success ? 'linear-gradient(135deg, #059669, #047857)' : 'linear-gradient(135deg, #dc2626, #991b1b)'}; display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="max-width: 600px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 50px; border: 1px solid rgba(255,255,255,0.2); text-align: center;">
+        <div style="font-size: 100px; margin-bottom: 30px;">
+          ${success ? '🏆' : '💀'}
+        </div>
+        <h1 style="font-size: 48px; font-weight: bold; color: white; margin: 0 0 20px 0;">
+          ${success ? '¡Nivel Completado!' : 'Nivel Fallido'}
+        </h1>
+        <div style="font-size: 24px; color: rgba(255,255,255,0.9); margin-bottom: 30px;">
+          ${message}
+        </div>
+        
+        ${success ? `
+        <div style="display: flex; justify-content: center; gap: 20px; margin-bottom: 40px;">
+          ${[1,2,3].map(star => `
+            <div style="font-size: 50px; color: ${star <= starsEarned ? '#fbbf24' : '#6b7280'};">
+              ${star <= starsEarned ? '⭐' : '☆'}
+            </div>
+          `).join('')}
+        </div>
+        
+        <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; color: white;">
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Tiempo</div>
+              <div style="font-size: 24px; font-weight: bold;">${formatTime(gameState.timer)}</div>
+            </div>
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Errores</div>
+              <div style="font-size: 24px; font-weight: bold;">${gameState.mistakes}</div>
+            </div>
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Puntos</div>
+              <div style="font-size: 24px; font-weight: bold;">+${starsEarned * 100}</div>
+            </div>
+          </div>
+        </div>
+        ` : `
+        <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
+          <div style="color: white; font-size: 36px; font-weight: bold;">
+            Vidas restantes: ${gameState.tournamentProgress.lives} ❤️
+          </div>
+          ${gameState.tournamentProgress.lives === 0 ? 
+            '<div style="color: rgba(255,255,255,0.8); margin-top: 10px;">¡Se acabaron las vidas! El torneo ha terminado.</div>' : 
+            ''
+          }
+        </div>
+        `}
+        
+        <div style="display: flex; flex-direction: column; gap: 15px;">
+          ${success ? `
+            ${getNextLevel() ? `
+              <button onclick="startTournamentLevel(${getCurrentChapter().id}, ${getNextLevel().id})" style="
+                background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                color: white;
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                cursor: pointer;
+              ">🎮 Siguiente Nivel</button>
+            ` : `
+              <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="
+                background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                color: white;
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                cursor: pointer;
+              ">🏆 Volver al Capítulo</button>
+            `}
+          ` : `
+            ${gameState.tournamentProgress.lives > 0 ? `
+              <button onclick="startTournamentLevel(${getCurrentChapter().id}, ${getCurrentLevel().id})" style="
+                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                color: white;
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                cursor: pointer;
+              ">🔄 Reintentar Nivel</button>
+            ` : ''}
+          `}
+          
+          <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+          ">📖 Volver al Capítulo</button>
+          
+          <button onclick="renderMenu()" style="
+            background: rgba(255,255,255,0.1);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 15px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+          ">🏠 Menú Principal</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Funciones auxiliares
+function getCurrentChapter() {
+  return tournamentStructure.chapters.find(c => c.id === gameState.tournamentProgress.currentChapter) || tournamentStructure.chapters[0];
+}
+
+function getCurrentLevel() {
+  // Esta función necesitaría saber qué nivel se está jugando actualmente
+  // Por simplicidad, asumimos que se guarda en gameState
+  return gameState.currentTournamentLevel;
+}
+
+function getNextLevel() {
+  const chapter = getCurrentChapter();
+  const currentLevel = getCurrentLevel();
+  if (!currentLevel) return chapter.levels[0];
+  
+  if (currentLevel.id === chapter.boss.id) {
+    // Boss completado - siguiente capítulo
+    const nextChapter = tournamentStructure.chapters.find(c => c.id === chapter.id + 1);
+    return nextChapter ? nextChapter.levels[0] : null;
+  }
+  
+  return chapter.levels.find(l => l.id === currentLevel.id + 1) || chapter.boss;
+}
+
+function showTournamentChapter(chapterId) {
+  const chapter = tournamentStructure.chapters.find(c => c.id === chapterId);
+  if (!chapter) return;
+  
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto; box-sizing: border-box;">
+      <div style="max-width: 1000px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+          <button onclick="showTournamentMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;">← Volver</button>
+          <h1 style="color: ${theme.text}; margin: 0; text-align: center;">${chapter.name}</h1>
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="color: ${theme.text}; background: rgba(255,255,255,0.1); padding: 8px 15px; border-radius: 10px;">
+              ❤️ ${gameState.tournamentProgress.lives}
+            </div>
+            <div style="color: ${theme.text}; background: rgba(255,255,255,0.1); padding: 8px 15px; border-radius: 10px;">
+              ⭐ ${gameState.tournamentProgress.totalScore}
+            </div>
+          </div>
+        </div>
+        
+        <!-- Descripción del capítulo -->
+        <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 30px;">
+          <div style="color: ${theme.text}; font-size: 18px; line-height: 1.5; text-align: center;">
+            ${chapter.description}
+          </div>
+        </div>
+        
+        <!-- Niveles del capítulo -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
+          ${chapter.levels.map(level => {
+            const completion = gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id);
+            const isUnlocked = level.id === 1 || 
+              gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id - 1);
+            
+            return `
+              <div onclick="${isUnlocked ? `startTournamentLevel(${chapter.id}, ${level.id})` : ''}" style="
+                background: ${isUnlocked ? theme.cardBg : 'rgba(255,255,255,0.05)'};
+                backdrop-filter: blur(20px);
+                border-radius: 15px;
+                padding: 20px;
+                border: 1px solid ${isUnlocked ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.1)'};
+                cursor: ${isUnlocked ? 'pointer' : 'not-allowed'};
+                opacity: ${isUnlocked ? 1 : 0.6};
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='${isUnlocked ? 'scale(1.05)' : 'none'}'" onmouseout="this.style.transform='scale(1)'">
+                <div style="text-align: center; color: ${theme.text};">
+                  <div style="font-size: 14px; opacity: 0.8; margin-bottom: 5px;">Nivel ${level.id}</div>
+                  <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px;">${level.difficulty.toUpperCase()}</div>
+                  
+                  ${completion ? `
+                    <div style="display: flex; justify-content: center; gap: 5px; margin-bottom: 10px;">
+                      ${[1,2,3].map(star => `
+                        <span style="color: ${star <= completion.stars ? '#fbbf24' : '#6b7280'}; font-size: 16px;">
+                          ${star <= completion.stars ? '⭐' : '☆'}
+                        </span>
+                      `).join('')}
+                    </div>
+                    <div style="font-size: 12px; opacity: 0.8;">
+                      ${formatTime(completion.time)}
+                    </div>
+                  ` : `
+                    <div style="font-size: 12px; opacity: 0.8; margin-bottom: 15px;">
+                      ${formatTime(level.timeLimit)} límite
+                    </div>
+                    ${!isUnlocked ? `
+                      <div style="font-size: 11px; color: #ef4444;">
+                        Completa el nivel anterior
+                      </div>
+                    ` : `
+                      <div style="font-size: 11px; color: #10b981;">
+                        ¡Comenzar!
+                      </div>
+                    `}
+                  `}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        
+        <!-- Boss Battle -->
+        <div onclick="${isBossUnlocked(chapter) ? `startTournamentLevel(${chapter.id}, ${chapter.boss.id}, true)` : ''}" style="
+          background: ${isBossUnlocked(chapter) ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 'rgba(245, 158, 11, 0.3)'};
+          backdrop-filter: blur(20px);
+          border-radius: 20px;
+          padding: 30px;
+          border: 2px solid ${isBossUnlocked(chapter) ? 'rgba(245, 158, 11, 0.5)' : 'rgba(245, 158, 11, 0.2)'};
+          cursor: ${isBossUnlocked(chapter) ? 'pointer' : 'not-allowed'};
+          opacity: ${isBossUnlocked(chapter) ? 1 : 0.6};
+          transition: transform 0.2s;
+          text-align: center;
+        " onmouseover="this.style.transform='${isBossUnlocked(chapter) ? 'scale(1.02)' : 'none'}'" onmouseout="this.style.transform='scale(1)'">
+          <div style="color: white;">
+            <div style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">👑 BOSS BATTLE</div>
+            <div style="font-size: 16px; margin-bottom: 15px; opacity: 0.9;">${chapter.boss.specialRule}</div>
+            <div style="font-size: 14px; opacity: 0.8;">
+              ${isBossUnlocked(chapter) ? 
+                '¡Completa todos los niveles para desbloquear!' : 
+                'Completa todos los niveles normales primero'
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function isBossUnlocked(chapter) {
+  return chapter.levels.every(level => 
+    gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id)
+  );
+}
+
+function showTournamentMenu() {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto; box-sizing: border-box;">
+      <div style="max-width: 800px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="text-align: center; margin-bottom: 40px;">
+          <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px; position: absolute; left: 20px;">← Menú</button>
+          <h1 style="color: ${theme.text}; font-size: 48px; margin: 0 0 10px 0;">🏆 Torneo</h1>
+          <p style="color: ${theme.text}; opacity: 0.8; font-size: 18px;">Completa niveles, gana estrellas y conviértete en leyenda</p>
+        </div>
+        
+        <!-- Estadísticas del torneo -->
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 40px;">
+          <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 15px; text-align: center; border: 1px solid rgba(255,255,255,0.2);">
+            <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">${gameState.tournamentProgress.lives}</div>
+            <div style="color: ${theme.text}; opacity: 0.8;">Vidas</div>
+          </div>
+          <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 15px; text-align: center; border: 1px solid rgba(255,255,255,0.2);">
+            <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">${gameState.tournamentProgress.totalScore}</div>
+            <div style="color: ${theme.text}; opacity: 0.8;">Puntos</div>
+          </div>
+          <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 15px; text-align: center; border: 1px solid rgba(255,255,255,0.2);">
+            <div style="color: ${theme.text}; font-size: 36px; font-weight: bold;">${gameState.tournamentProgress.completedLevels.length}</div>
+            <div style="color: ${theme.text}; opacity: 0.8;">Niveles</div>
+          </div>
+        </div>
+        
+        <!-- Capítulos -->
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          ${tournamentStructure.chapters.map(chapter => {
+            const isUnlocked = gameState.tournamentProgress.unlockedChapters.includes(chapter.id);
+            const completedLevels = gameState.tournamentProgress.completedLevels.filter(l => 
+              chapter.levels.some(cl => cl.id === l.levelId) || l.levelId === chapter.boss.id
+            ).length;
+            const totalLevels = chapter.levels.length + 1; // +1 for boss
+            
+            return `
+              <div onclick="${isUnlocked ? `showTournamentChapter(${chapter.id})` : ''}" style="
+                background: ${isUnlocked ? theme.cardBg : 'rgba(255,255,255,0.05)'};
+                backdrop-filter: blur(20px);
+                border-radius: 20px;
+                padding: 25px;
+                border: 1px solid ${isUnlocked ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.1)'};
+                cursor: ${isUnlocked ? 'pointer' : 'not-allowed'};
+                opacity: ${isUnlocked ? 1 : 0.6};
+                transition: transform 0.2s;
+                color: ${theme.text};
+              " onmouseover="this.style.transform='${isUnlocked ? 'scale(1.02)' : 'none'}'" onmouseout="this.style.transform='scale(1)'">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <div style="font-size: 20px; font-weight: bold; margin-bottom: 5px;">
+                      ${chapter.name}
+                    </div>
+                    <div style="opacity: 0.7; font-size: 14px;">
+                      ${chapter.description}
+                    </div>
+                  </div>
+                  <div style="text-align: right;">
+                    <div style="font-size: 24px; font-weight: bold;">
+                      ${completedLevels}/${totalLevels}
+                    </div>
+                    <div style="opacity: 0.7; font-size: 12px;">
+                      Niveles
+                    </div>
+                  </div>
+                </div>
+                ${!isUnlocked ? `
+                  <div style="color: #ef4444; font-size: 12px; margin-top: 10px;">
+                    Completa el capítulo anterior para desbloquear
+                  </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function showTournamentChapter(chapterId) {
+  const chapter = tournamentStructure.chapters.find(c => c.id === chapterId);
+  if (!chapter) return;
+  
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto; box-sizing: border-box;">
+      <div style="max-width: 1000px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+          <button onclick="showTournamentMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;">← Volver</button>
+          <h1 style="color: ${theme.text}; margin: 0; text-align: center;">${chapter.name}</h1>
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="color: ${theme.text}; background: rgba(255,255,255,0.1); padding: 8px 15px; border-radius: 10px;">
+              ❤️ ${gameState.tournamentProgress.lives}
+            </div>
+            <div style="color: ${theme.text}; background: rgba(255,255,255,0.1); padding: 8px 15px; border-radius: 10px;">
+              ⭐ ${gameState.tournamentProgress.totalScore}
+            </div>
+          </div>
+        </div>
+        
+        <!-- Descripción del capítulo -->
+        <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 30px;">
+          <div style="color: ${theme.text}; font-size: 18px; line-height: 1.5; text-align: center;">
+            ${chapter.description}
+          </div>
+        </div>
+        
+        <!-- Niveles del capítulo -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
+          ${chapter.levels.map(level => {
+            const completion = gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id);
+            const isUnlocked = level.id === 1 || 
+              gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id - 1);
+            
+            return `
+              <div onclick="${isUnlocked ? `startTournamentLevel(${chapter.id}, ${level.id})` : ''}" style="
+                background: ${isUnlocked ? theme.cardBg : 'rgba(255,255,255,0.05)'};
+                backdrop-filter: blur(20px);
+                border-radius: 15px;
+                padding: 20px;
+                border: 1px solid ${isUnlocked ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.1)'};
+                cursor: ${isUnlocked ? 'pointer' : 'not-allowed'};
+                opacity: ${isUnlocked ? 1 : 0.6};
+                transition: transform 0.2s;
+                color: ${theme.text};
+              " onmouseover="this.style.transform='${isUnlocked ? 'scale(1.05)' : 'none'}'" onmouseout="this.style.transform='scale(1)'">
+                <div style="text-align: center;">
+                  <div style="opacity: 0.8; margin-bottom: 5px;">Nivel ${level.id}</div>
+                  <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px;">${level.difficulty.toUpperCase()}</div>
+                  
+                  ${completion ? `
+                    <div style="display: flex; justify-content: center; gap: 5px; margin-bottom: 10px;">
+                      ${[1,2,3].map(star => `
+                        <span style="color: ${star <= completion.stars ? '#fbbf24' : '#6b7280'}; font-size: 16px;">
+                          ${star <= completion.stars ? '⭐' : '☆'}
+                        </span>
+                      `).join('')}
+                    </div>
+                    <div style="opacity: 0.8; font-size: 12px;">
+                      ${formatTime(completion.time)}
+                    </div>
+                  ` : `
+                    <div style="opacity: 0.8; margin-bottom: 15px; font-size: 12px;">
+                      ${formatTime(level.timeLimit)} límite
+                    </div>
+                    ${!isUnlocked ? `
+                      <div style="color: #ef4444; font-size: 11px;">
+                        Completa el nivel anterior
+                      </div>
+                    ` : `
+                      <div style="color: #10b981; font-size: 11px;">
+                        ¡Comenzar!
+                      </div>
+                    `}
+                  `}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        
+        <!-- Boss Battle -->
+        <div onclick="${isBossUnlocked(chapter) ? `startTournamentLevel(${chapter.id}, ${chapter.boss.id}, true)` : ''}" style="
+          background: ${isBossUnlocked(chapter) ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 'rgba(245, 158, 11, 0.3)'};
+          backdrop-filter: blur(20px);
+          border-radius: 20px;
+          padding: 30px;
+          border: 2px solid ${isBossUnlocked(chapter) ? 'rgba(245, 158, 11, 0.5)' : 'rgba(245, 158, 11, 0.2)'};
+          cursor: ${isBossUnlocked(chapter) ? 'pointer' : 'not-allowed'};
+          opacity: ${isBossUnlocked(chapter) ? 1 : 0.6};
+          transition: transform 0.2s;
+          text-align: center;
+          color: white;
+        " onmouseover="this.style.transform='${isBossUnlocked(chapter) ? 'scale(1.02)' : 'none'}'" onmouseout="this.style.transform='scale(1)'">
+          <div>
+            <div style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">👑 BOSS BATTLE</div>
+            <div style="font-size: 16px; margin-bottom: 15px; opacity: 0.9;">${chapter.boss.specialRule}</div>
+            <div style="font-size: 14px; opacity: 0.8;">
+              ${isBossUnlocked(chapter) ? 
+                '¡Desbloqueado! ¡Haz clic para comenzar!' : 
+                'Completa todos los niveles normales primero'
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderTournamentGame(level, isBoss = false) {
+  const theme = themes[gameState.theme];
+  const timeLeft = level.timeLimit - gameState.timer;
+  const timeWarning = timeLeft < 60;
+  
+  const root = document.getElementById('root');
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.bg}; padding: 10px; overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;">
+      <div style="max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; overflow-y: auto;">
+        <div style="display: grid; grid-template-columns: 1fr 300px; gap: 15px; height: 100%;">
+          
+          <!-- Columna izquierda: Tablero -->
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            <!-- Header del torneo -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 10px 15px; border-radius: 10px; cursor: pointer; font-size: 14px;">← Volver</button>
+                <div style="text-align: center; color: ${theme.text};">
+                  <div style="font-size: 18px; font-weight: bold;">${isBoss ? '👑 ' : ''}Nivel ${level.id}</div>
+                  <div style="font-size: 12px; opacity: 0.8;">${level.difficulty.toUpperCase()}</div>
+                </div>
+                <div style="width: 100px; text-align: right;">
+                  <div style="font-size: 24px; font-weight: bold; color: ${timeWarning ? '#ef4444' : theme.text};">
+                    ${formatTime(timeLeft)}
+                  </div>
+                </div>
+              </div>
+              
+              ${isBoss ? `
+              <div style="background: linear-gradient(135deg, #f59e0b, #d97706); padding: 10px; border-radius: 10px; text-align: center; color: white; font-weight: bold;">
+                👑 BOSS BATTLE: ${level.specialRule}
+              </div>
+              ` : ''}
+              
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 15px;">
+                <div style="text-align: center;">
+                  <div style="color: ${theme.text}; font-size: 12px;">Errores</div>
+                  <div style="color: ${gameState.mistakes >= level.requiredMistakes ? '#ef4444' : '#10b981'}; font-size: 18px; font-weight: bold;">
+                    ${gameState.mistakes}/${level.requiredMistakes}
+                  </div>
+                </div>
+                <div style="text-align: center;">
+                  <div style="color: ${theme.text}; font-size: 12px;">Vidas</div>
+                  <div style="color: ${theme.text}; font-size: 18px; font-weight: bold;">${gameState.tournamentProgress.lives} ❤️</div>
+                </div>
+                <div style="text-align: center;">
+                  <div style="color: ${theme.text}; font-size: 12px;">Estrellas</div>
+                  <div style="color: #fbbf24; font-size: 18px; font-weight: bold;">
+                    ${calculateEarnedStars(level, gameState.timer, gameState.mistakes)}/3 ⭐
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tablero -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 12px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: flex; justify-content: center;">
+                <div id="board"></div>
+              </div>
+            </div>
+
+            <!-- Controles -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;">
+                ${[1,2,3,4,5,6,7,8,9].map(num => `
+                  <button onclick="inputNumber(${num})" style="
+                    background: rgba(102, 126, 234, 0.8); 
+                    color: white; 
+                    padding: 16px; 
+                    border: none; 
+                    border-radius: 10px; 
+                    font-size: 20px; 
+                    font-weight: bold; 
+                    cursor: pointer; 
+                  ">${num}</button>
+                `).join('')}
+                <button onclick="inputNumber(0)" style="background: rgba(239,68,68,0.8); color: white; padding: 16px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer;">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Columna derecha: Información del nivel -->
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            <!-- Objetivos -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="color: ${theme.text}; margin-bottom: 15px;">🎯 Objetivos</h3>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: ${theme.text}; font-size: 14px;">Completar el sudoku</span>
+                  <span style="color: #10b981; font-size: 18px;">✓</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: ${theme.text}; font-size: 14px;">Menos de ${level.requiredMistakes} errores</span>
+                  <span style="color: ${gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444'}; font-size: 18px;">
+                    ${gameState.mistakes < level.requiredMistakes ? '✓' : '✗'}
+                  </span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: ${theme.text}; font-size: 14px;">Dentro del tiempo límite</span>
+                  <span style="color: ${timeLeft > 0 ? '#10b981' : '#ef4444'}; font-size: 18px;">
+                    ${timeLeft > 0 ? '✓' : '✗'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recompensas de estrellas -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="color: ${theme.text}; margin-bottom: 15px;">⭐ Recompensas</h3>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${level.stars.map((starTime, index) => {
+                  const starsEarned = calculateEarnedStars(level, gameState.timer, gameState.mistakes);
+                  const isUnlocked = starsEarned > index;
+                  const currentTime = gameState.timer;
+                  
+                  return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="color: ${isUnlocked ? '#fbbf24' : '#6b7280'}; font-size: 16px;">
+                          ${isUnlocked ? '⭐' : '☆'}
+                        </span>
+                        <span style="color: ${theme.text}; font-size: 14px;">
+                          ${index + 1} estrella${index > 0 ? 's' : ''}
+                        </span>
+                      </div>
+                      <span style="color: ${currentTime <= starTime ? '#10b981' : '#6b7280'}; font-size: 12px; font-family: monospace;">
+                        < ${formatTime(starTime)}
+                      </span>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Reglas especiales -->
+            ${isBoss ? `
+            <div style="background: rgba(245, 158, 11, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(245, 158, 11, 0.3);">
+              <h3 style="color: #f59e0b; margin-bottom: 10px;">⚡ Reglas del Boss</h3>
+              <div style="color: #f59e0b; opacity: 0.9; font-size: 13px; line-height: 1.4;">
+                ${level.specialRule}
+              </div>
+            </div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  renderBoard();
+}
+
+function showTournamentLevelResult(success, message) {
+  const level = getCurrentLevel();
+  const starsEarned = success ? calculateEarnedStars(level, gameState.timer, gameState.mistakes) : 0;
+  
+  if (success) {
+    // Registrar victoria
+    const levelCompletion = {
+      levelId: level.id,
+      stars: starsEarned,
+      time: gameState.timer,
+      mistakes: gameState.mistakes,
+      date: new Date().toISOString()
+    };
+    
+    if (!gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id)) {
+      gameState.tournamentProgress.completedLevels.push(levelCompletion);
+    } else {
+      // Actualizar si mejoró el resultado
+      const existing = gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id);
+      if (starsEarned > existing.stars) {
+        existing.stars = starsEarned;
+        existing.time = gameState.timer;
+        existing.mistakes = gameState.mistakes;
+      }
+    }
+    
+    gameState.tournamentProgress.totalScore += starsEarned * 100;
+    
+  } else {
+    // Registrar derrota - perder vida
+    gameState.tournamentProgress.lives--;
+  }
+  
+  saveStats();
+  
+  // Mostrar pantalla de resultado
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  const bgGradient = success ? 'linear-gradient(135deg, #059669, #047857)' : 'linear-gradient(135deg, #dc2626, #991b1b)';
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${bgGradient}; display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="max-width: 600px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 50px; border: 1px solid rgba(255,255,255,0.2); text-align: center; color: white;">
+        <div style="font-size: 100px; margin-bottom: 30px;">
+          ${success ? '🏆' : '💀'}
+        </div>
+        <h1 style="font-size: 48px; font-weight: bold; margin: 0 0 20px 0;">
+          ${success ? '¡Nivel Completado!' : 'Nivel Fallido'}
+        </h1>
+        <div style="font-size: 24px; opacity: 0.9; margin-bottom: 30px;">
+          ${message}
+        </div>
+        
+        ${success ? `
+        <div style="display: flex; justify-content: center; gap: 20px; margin-bottom: 40px;">
+          ${[1,2,3].map(star => `
+            <div style="font-size: 50px; color: ${star <= starsEarned ? '#fbbf24' : 'rgba(255,255,255,0.3)'};">
+              ${star <= starsEarned ? '⭐' : '☆'}
+            </div>
+          `).join('')}
+        </div>
+        
+        <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Tiempo</div>
+              <div style="font-size: 24px; font-weight: bold;">${formatTime(gameState.timer)}</div>
+            </div>
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Errores</div>
+              <div style="font-size: 24px; font-weight: bold;">${gameState.mistakes}</div>
+            </div>
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Puntos</div>
+              <div style="font-size: 24px; font-weight: bold;">+${starsEarned * 100}</div>
+            </div>
+          </div>
+        </div>
+        ` : `
+        <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
+          <div style="font-size: 36px; font-weight: bold;">
+            Vidas restantes: ${gameState.tournamentProgress.lives} ❤️
+          </div>
+          ${gameState.tournamentProgress.lives === 0 ? 
+            '<div style="opacity: 0.8; margin-top: 10px;">¡Se acabaron las vidas! El torneo ha terminado.</div>' : 
+            ''
+          }
+        </div>
+        `}
+        
+        <div style="display: flex; flex-direction: column; gap: 15px;">
+          ${success ? `
+            ${getNextLevel() ? `
+              <button onclick="startTournamentLevel(${getCurrentChapter().id}, ${getNextLevel().id})" style="
+                background: rgba(255,255,255,0.2);
+                color: white;
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🎮 Siguiente Nivel</button>
+            ` : `
+              <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="
+                background: rgba(255,255,255,0.2);
+                color: white;
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🏆 Volver al Capítulo</button>
+            `}
+          ` : `
+            ${gameState.tournamentProgress.lives > 0 ? `
+              <button onclick="startTournamentLevel(${getCurrentChapter().id}, ${getCurrentLevel().id})" style="
+                background: rgba(255,255,255,0.2);
+                color: white;
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🔄 Reintentar Nivel</button>
+            ` : ''}
+          `}
+          
+          <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="
+            background: rgba(255,255,255,0.1);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+          " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">📖 Volver al Capítulo</button>
+          
+          <button onclick="renderMenu()" style="
+            background: rgba(255,255,255,0.05);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 15px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+          " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🏠 Menú Principal</button>
+        </div>
+      </div>
     </div>
   `;
 }
