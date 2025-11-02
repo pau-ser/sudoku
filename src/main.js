@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron'); // Añadir ipcMain
 const path = require('path');
 
 let mainWindow;
@@ -9,9 +9,10 @@ function createWindow() {
     height: 800,
     minWidth: 1024,
     minHeight: 600,
+    fullscreen: true, 
     webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
+      nodeIntegration: true, 
+      contextIsolation: false, 
       preload: path.join(__dirname, 'preload.js')
     },
     backgroundColor: '#1a1a2e',
@@ -25,6 +26,13 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   }
 }
+
+// AÑADIR ESTE LISTENER
+ipcMain.on('toggle-fullscreen', () => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  }
+});
 
 app.whenReady().then(createWindow);
 

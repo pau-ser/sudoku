@@ -1,5 +1,4 @@
-// app.js - Versión completa mejorada
-// Copia este archivo en src/renderer/app.js
+// app.js - Versión con anotaciones mejoradas
 
 // Función seed para random determinístico
 Math.seedrandom = function(seed) {
@@ -152,6 +151,7 @@ class SoundSystem {
   error() { this.playTone(200, 0.2, 'sawtooth'); }
   hint() { this.playTone(1000, 0.15); }
   tick() { this.playTone(1200, 0.03); }
+  note() { this.playTone(900, 0.08); } // Nuevo sonido para notas
   complete() {
     this.playTone(523, 0.15);
     setTimeout(() => this.playTone(659, 0.15), 150);
@@ -176,12 +176,12 @@ const gameState = {
   timerInterval: null,
   theme: localStorage.getItem('sudoku-theme') || 'dark',
   moveHistory: [],
-  notes: {}, // Para modo notas
+  notes: {}, // Para modo notas - ahora mejorado
   notesMode: false,
   autoCheck: JSON.parse(localStorage.getItem('sudoku-autocheck') || 'true'),
   expertMode: false,
   timeAttackMode: false,
-  timeAttackLimit: 600, // 10 minutos
+  timeAttackLimit: 600,
   stats: JSON.parse(localStorage.getItem('sudoku-stats') || '{"gamesWon":0,"bestTime":"--:--","streak":0,"totalTime":0,"byDifficulty":{}}'),
   savedGames: JSON.parse(localStorage.getItem('sudoku-saved') || '[]'),
   dailyChallenge: JSON.parse(localStorage.getItem('sudoku-daily') || 'null'),
@@ -261,7 +261,6 @@ function saveProgress() {
   gameState.progressData.times.push(gameState.timer);
   gameState.progressData.accuracies.push(accuracy);
   
-  // Mantener solo últimos 30 días
   if (gameState.progressData.dates.length > 30) {
     gameState.progressData.dates.shift();
     gameState.progressData.times.shift();
@@ -284,7 +283,9 @@ function saveGame() {
     hintsUsed: gameState.hintsUsed,
     date: new Date().toLocaleString(),
     moveHistory: gameState.moveHistory,
-    notes: gameState.notes,
+    notes: Object.fromEntries(
+      Object.entries(gameState.notes).map(([k, v]) => [k, Array.from(v)])
+    ),
     expertMode: gameState.expertMode,
     timeAttackMode: gameState.timeAttackMode
   };
@@ -307,7 +308,12 @@ function loadGame(id) {
   gameState.mistakes = saved.mistakes;
   gameState.hintsUsed = saved.hintsUsed;
   gameState.moveHistory = saved.moveHistory || [];
-  gameState.notes = saved.notes || {};
+  gameState.notes = {};
+  if (saved.notes) {
+    Object.entries(saved.notes).forEach(([k, v]) => {
+      gameState.notes[k] = new Set(v);
+    });
+  }
   gameState.expertMode = saved.expertMode || false;
   gameState.timeAttackMode = saved.timeAttackMode || false;
   
@@ -334,7 +340,6 @@ function getDailyChallenge() {
     return gameState.dailyChallenge;
   }
   
-  // Generar nuevo daily challenge con seed basado en fecha
   const seedValue = new Date().getFullYear() * 10000 + 
                     (new Date().getMonth() + 1) * 100 + 
                     new Date().getDate();
@@ -372,7 +377,84 @@ function toggleTheme() {
 function toggleNotesMode() {
   gameState.notesMode = !gameState.notesMode;
   gameState.sound.click();
+  showNotification(gameState.notesMode ? '📝 Modo Anotaciones: ON' : '✏️ Modo Normal: ON');
   renderGame();
+}
+
+function clearAllNotes() {
+  if (confirm('¿Borrar todas las anotaciones?')) {
+    gameState.notes = {};
+    gameState.sound.click();
+    showNotification('🗑️ Anotaciones borradas');
+    renderGame();
+  }
+}
+
+function clearCellNotes() {
+  if (!gameState.selectedCell) {
+    showNotification('Selecciona una celda primero');
+    return;
+  }
+  const [row, col] = gameState.selectedCell;
+  const key = `${row}-${col}`;
+  if (gameState.notes[key]) {
+    delete gameState.notes[key];
+    gameState.sound.click();
+    showNotification('🗑️ Anotaciones borradas de la celda');
+    renderBoard();
+  }
+}
+
+function autoFillNotes() {
+  let filled = 0;
+  for (let i = 0; i < 9; i++) {
+    for (let j = 0; j < 9; j++) {
+      if (gameState.userBoard[i][j] === 0 && gameState.currentPuzzle.puzzle[i][j] === 0) {
+        const key = `${i}-${j}`;
+        const candidates = getCandidates(i, j);
+        if (candidates.length > 0) {
+          gameState.notes[key] = new Set(candidates);
+          filled++;
+        }
+      }
+    }
+  }
+  gameState.sound.hint();
+  showNotification(`✨ ${filled} celdas con anotaciones automáticas`);
+  renderGame();
+}
+
+function getCandidates(row, col) {
+  const candidates = [];
+  for (let num = 1; num <= 9; num++) {
+    if (isValidMove(row, col, num)) {
+      candidates.push(num);
+    }
+  }
+  return candidates;
+}
+
+function isValidMove(row, col, num) {
+  // Verificar fila
+  for (let j = 0; j < 9; j++) {
+    if (gameState.userBoard[row][j] === num) return false;
+  }
+  
+  // Verificar columna
+  for (let i = 0; i < 9; i++) {
+    if (gameState.userBoard[i][col] === num) return false;
+  }
+  
+  // Verificar cuadro 3x3
+  const boxRow = Math.floor(row / 3) * 3;
+  const boxCol = Math.floor(col / 3) * 3;
+  for (let i = boxRow; i < boxRow + 3; i++) {
+    for (let j = boxCol; j < boxCol + 3; j++) {
+      if (gameState.userBoard[i][j] === num) return false;
+    }
+  }
+  
+  return true;
 }
 
 function showNotification(message) {
@@ -382,19 +464,58 @@ function showNotification(message) {
     position: fixed;
     top: 20px;
     right: 20px;
-    background: rgba(0,0,0,0.8);
+    background: rgba(0,0,0,0.9);
     color: white;
     padding: 15px 25px;
     border-radius: 10px;
     font-weight: bold;
     z-index: 1000;
     animation: slideIn 0.3s;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
   `;
   document.body.appendChild(notif);
   setTimeout(() => {
     notif.style.animation = 'slideOut 0.3s';
     setTimeout(() => notif.remove(), 300);
   }, 2000);
+}
+
+function showTimeUpScreen() {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="min-height: 100vh; background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="max-width: 600px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 60px; border: 1px solid rgba(255,255,255,0.2); text-align: center;">
+        <div style="font-size: 120px; margin-bottom: 30px;">⏰</div>
+        <h1 style="font-size: 48px; font-weight: bold; color: white; margin: 0 0 20px 0;">¡Tiempo agotado!</h1>
+        <div style="font-size: 24px; color: rgba(255,255,255,0.9); margin-bottom: 40px;">No completaste el sudoku a tiempo</div>
+        
+        <div style="display: flex; flex-direction: column; gap: 15px;">
+          <button onclick="startNewGame('${gameState.difficulty}', false, true)" style="
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+          ">⏱️ Intentar de nuevo</button>
+          <button onclick="renderMenu()" style="
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+          ">🏠 Menú principal</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // Funciones del juego
@@ -448,13 +569,17 @@ function selectCell(row, col) {
 }
 
 function inputNumber(num) {
-  if (!gameState.selectedCell) return;
+  if (!gameState.selectedCell) {
+    showNotification('❌ Selecciona una celda primero');
+    return;
+  }
   const [row, col] = gameState.selectedCell;
   if (gameState.currentPuzzle.puzzle[row][col] !== 0) return;
   
+  const key = `${row}-${col}`;
+  
   if (gameState.notesMode) {
-    // Modo notas
-    const key = `${row}-${col}`;
+    // Modo anotaciones
     if (!gameState.notes[key]) gameState.notes[key] = new Set();
     
     if (gameState.notes[key].has(num)) {
@@ -462,38 +587,84 @@ function inputNumber(num) {
     } else {
       gameState.notes[key].add(num);
     }
-    gameState.sound.click();
+    
+    // Si no quedan notas, eliminar la entrada
+    if (gameState.notes[key].size === 0) {
+      delete gameState.notes[key];
+    }
+    
+    gameState.sound.note();
     renderBoard();
     return;
   }
   
-  // Modo normal
+  // Modo normal - entrada de número
   if (!gameState.expertMode) {
     gameState.moveHistory.push({
       row,
       col,
       oldValue: gameState.userBoard[row][col],
       newValue: num,
-      oldNotes: gameState.notes[`${row}-${col}`] ? new Set(gameState.notes[`${row}-${col}`]) : null
+      oldNotes: gameState.notes[key] ? new Set(gameState.notes[key]) : null
     });
   }
   
-  gameState.userBoard[row][col] = gameState.userBoard[row][col] === num ? 0 : num;
-  
-  // Limpiar notas de esta celda
-  const key = `${row}-${col}`;
-  if (gameState.notes[key]) delete gameState.notes[key];
-  
-  if (num !== 0 && num !== gameState.currentPuzzle.solution[row][col]) {
-    gameState.mistakes++;
-    gameState.sound.error();
-    updateMistakes();
+  // Si ya hay un número, borrarlo (toggle)
+  if (gameState.userBoard[row][col] === num) {
+    gameState.userBoard[row][col] = 0;
+    gameState.sound.click();
   } else {
-    gameState.sound.input();
+    gameState.userBoard[row][col] = num;
+    
+    // Limpiar anotaciones de esta celda al ingresar un número
+    if (gameState.notes[key]) delete gameState.notes[key];
+    
+    // Verificar si es correcto
+    if (num !== gameState.currentPuzzle.solution[row][col]) {
+      gameState.mistakes++;
+      gameState.sound.error();
+      updateMistakes();
+    } else {
+      gameState.sound.input();
+      // Limpiar anotaciones relacionadas en fila, columna y cuadro
+      cleanRelatedNotes(row, col, num);
+    }
   }
   
   renderBoard();
   checkWin();
+}
+
+function cleanRelatedNotes(row, col, num) {
+  // Limpiar el número de las anotaciones en la fila, columna y cuadro
+  for (let i = 0; i < 9; i++) {
+    // Fila
+    const rowKey = `${row}-${i}`;
+    if (gameState.notes[rowKey]) {
+      gameState.notes[rowKey].delete(num);
+      if (gameState.notes[rowKey].size === 0) delete gameState.notes[rowKey];
+    }
+    
+    // Columna
+    const colKey = `${i}-${col}`;
+    if (gameState.notes[colKey]) {
+      gameState.notes[colKey].delete(num);
+      if (gameState.notes[colKey].size === 0) delete gameState.notes[colKey];
+    }
+  }
+  
+  // Cuadro 3x3
+  const boxRow = Math.floor(row / 3) * 3;
+  const boxCol = Math.floor(col / 3) * 3;
+  for (let i = boxRow; i < boxRow + 3; i++) {
+    for (let j = boxCol; j < boxCol + 3; j++) {
+      const boxKey = `${i}-${j}`;
+      if (gameState.notes[boxKey]) {
+        gameState.notes[boxKey].delete(num);
+        if (gameState.notes[boxKey].size === 0) delete gameState.notes[boxKey];
+      }
+    }
+  }
 }
 
 function checkWin() {
@@ -507,7 +678,6 @@ function checkWin() {
     gameState.stats.streak++;
     gameState.stats.totalTime += gameState.timer;
     
-    // Estadísticas por dificultad
     if (!gameState.stats.byDifficulty[gameState.difficulty]) {
       gameState.stats.byDifficulty[gameState.difficulty] = { won: 0, bestTime: null };
     }
@@ -528,7 +698,6 @@ function checkWin() {
       }
     }
     
-    // Daily challenge
     if (gameState.dailyChallenge && gameState.dailyChallenge.date === new Date().toDateString()) {
       if (!gameState.dailyChallenge.completed) {
         gameState.dailyChallenge.completed = true;
@@ -553,13 +722,24 @@ function getHint() {
   }
   
   if (!gameState.selectedCell) {
-    showNotification('Selecciona una celda primero');
+    showNotification('❌ Selecciona una celda primero');
     return;
   }
   const [row, col] = gameState.selectedCell;
-  if (gameState.currentPuzzle.puzzle[row][col] !== 0) return;
+  if (gameState.currentPuzzle.puzzle[row][col] !== 0) {
+    showNotification('❌ Esta celda ya tiene un valor fijo');
+    return;
+  }
   
   gameState.userBoard[row][col] = gameState.currentPuzzle.solution[row][col];
+  
+  // Limpiar anotaciones de esta celda
+  const key = `${row}-${col}`;
+  if (gameState.notes[key]) delete gameState.notes[key];
+  
+  // Limpiar anotaciones relacionadas
+  cleanRelatedNotes(row, col, gameState.currentPuzzle.solution[row][col]);
+  
   gameState.hintsUsed++;
   gameState.sound.hint();
   renderBoard();
@@ -574,7 +754,7 @@ function undoMove() {
   }
   
   if (gameState.moveHistory.length === 0) {
-    showNotification('No hay movimientos para deshacer');
+    showNotification('❌ No hay movimientos para deshacer');
     return;
   }
   
@@ -583,6 +763,8 @@ function undoMove() {
   
   if (lastMove.oldNotes) {
     gameState.notes[`${lastMove.row}-${lastMove.col}`] = lastMove.oldNotes;
+  } else {
+    delete gameState.notes[`${lastMove.row}-${lastMove.col}`];
   }
   
   gameState.sound.click();
@@ -643,7 +825,11 @@ document.addEventListener('keydown', (e) => {
   }
   
   if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
-    inputNumber(0);
+    if (gameState.notesMode && gameState.selectedCell) {
+      clearCellNotes();
+    } else {
+      inputNumber(0);
+    }
   }
   
   if (gameState.selectedCell) {
@@ -677,6 +863,15 @@ document.addEventListener('keydown', (e) => {
   
   if (e.key === 'n' || e.key === 'N') {
     toggleNotesMode();
+  }
+  
+  if (e.key === 'a' || e.key === 'A') {
+    autoFillNotes();
+  }
+  
+  if (e.ctrlKey && e.key === 'd') {
+    e.preventDefault();
+    clearAllNotes();
   }
 });
 
@@ -721,8 +916,8 @@ function renderMenu() {
   const theme = themes[gameState.theme];
   const root = document.getElementById('root');
   root.innerHTML = `
-    <div style="min-height: 100vh; background: ${theme.menuBg}; padding: 40px; overflow-y: auto;">
-      <div style="max-width: 1400px; margin: 0 auto;">
+    <div style="height: 100vh; background: ${theme.menuBg}; padding: 20px; overflow-y: scroll; box-sizing: border-box; display: flex; flex-direction: column;">
+      <div style="max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; overflow-y: auto;">
         <div style="text-align: center; margin-bottom: 50px;">
           <h1 style="font-size: 64px; font-weight: bold; color: white; margin: 0 0 15px 0; letter-spacing: -2px;">SUDOKU PRO</h1>
           <p style="font-size: 20px; color: rgba(255,255,255,0.9);">Lógica pura. Solución única garantizada.</p>
@@ -730,7 +925,7 @@ function renderMenu() {
 
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 30px;">
           <!-- Nueva Partida -->
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">🎮 Nueva Partida</h2>
             <div style="display: flex; flex-direction: column; gap: 12px;">
               <button onclick="startNewGame('hard', true)" style="
@@ -769,7 +964,7 @@ function renderMenu() {
           </div>
 
           <!-- Modos Especiales -->
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">⚡ Modos Especiales</h2>
             <div style="display: flex; flex-direction: column; gap: 12px;">
               <button onclick="startNewGame('medium', false, true)" style="
@@ -805,7 +1000,7 @@ function renderMenu() {
           </div>
 
           <!-- Estadísticas -->
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">📊 Estadísticas</h2>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
               <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 15px; text-align: center;">
@@ -826,7 +1021,7 @@ function renderMenu() {
 
         <!-- Leaderboard -->
         ${gameState.leaderboard.length > 0 ? `
-        <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 30px;">
+        <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 30px;">
           <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">🏆 Top 10 Mejores Tiempos</h2>
           <div style="display: grid; gap: 10px;">
             ${gameState.leaderboard.map((entry, idx) => `
@@ -853,7 +1048,7 @@ function renderMenu() {
         <!-- Partidas Guardadas y Gráfico -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px;">
           ${gameState.savedGames.length > 0 ? `
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">💾 Partidas Guardadas</h2>
             <div style="display: grid; gap: 12px;">
               ${gameState.savedGames.map(game => `
@@ -880,7 +1075,7 @@ function renderMenu() {
 
           <!-- Gráfico de Progreso -->
           ${gameState.progressData.dates.length > 0 ? `
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">📈 Progreso (Últimos ${gameState.progressData.dates.length} juegos)</h2>
             <div style="color: white;">
               <div style="margin-bottom: 20px;">
@@ -910,9 +1105,9 @@ function renderMenu() {
           ` : '<div></div>'}
         </div>
 
-        <!-- Configuración y Personalización -->
+        <!-- Configuración y Atajos -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px;">
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">⚙️ Configuración</h2>
             <div style="display: flex; flex-direction: column; gap: 12px;">
               <button onclick="toggleTheme()" style="
@@ -969,13 +1164,14 @@ function renderMenu() {
             </div>
           </div>
 
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
             <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">⌨️ Atajos de Teclado</h2>
             <div style="color: white; font-size: 14px; line-height: 2;">
               <div><strong>1-9:</strong> Ingresar números</div>
-              <div><strong>Flechas:</strong> Navegar</div>
-              <div><strong>Delete/Backspace:</strong> Borrar</div>
-              <div><strong>N:</strong> Modo notas</div>
+              <div><strong>N:</strong> Modo anotaciones</div>
+              <div><strong>A:</strong> Auto-llenar anotaciones</div>
+              <div><strong>Delete:</strong> Borrar celda/notas</div>
+              <div><strong>Ctrl+D:</strong> Borrar todas las notas</div>
               <div><strong>H:</strong> Pista</div>
               <div><strong>Ctrl+Z:</strong> Deshacer</div>
               <div><strong>Ctrl+S:</strong> Guardar</div>
@@ -993,15 +1189,17 @@ function renderGame() {
   const timeLeft = gameState.timeAttackMode ? gameState.timeAttackLimit - gameState.timer : 0;
   const timeWarning = gameState.timeAttackMode && timeLeft < 60;
   
+  const totalNotes = Object.keys(gameState.notes).length;
+  
   const root = document.getElementById('root');
   root.innerHTML = `
-    <div style="min-height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
-      <div style="max-width: 1400px; margin: 0 auto;">
-        <div style="display: grid; grid-template-columns: 1fr 320px; gap: 20px;">
-          <!-- Columna izquierda: Tablero y controles -->
-          <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="height: 100vh; background: ${theme.bg}; padding: 10px; overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;">
+      <div style="max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; overflow-y: auto;">
+        <div style="display: grid; grid-template-columns: 1fr 280px; gap: 15px; height: 100%;">
+          <!-- Columna izquierda -->
+          <div style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto; height: fit-content; max-height: 100%;">
             <!-- Tablero -->
-            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.2);">
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 12px; border: 1px solid rgba(255,255,255,0.2);">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                   <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 18px;">🏠</button>
@@ -1024,7 +1222,76 @@ function renderGame() {
               </div>
             </div>
 
-            <!-- Controles -->
+            <!-- Controles de Anotaciones -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                <h3 style="font-size: 18px; font-weight: bold; color: ${theme.text}; margin: 0;">📝 Anotaciones</h3>
+                <div style="color: ${theme.text}; font-size: 13px; opacity: 0.8;">${totalNotes} celdas con notas</div>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
+                <button onclick="toggleNotesMode()" style="
+                  background: ${gameState.notesMode ? 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)' : 'rgba(139,92,246,0.3)'};
+                  color: white;
+                  padding: 12px;
+                  border: none;
+                  border-radius: 10px;
+                  font-size: 14px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  transition: all 0.2s;
+                  border: ${gameState.notesMode ? '2px solid #a78bfa' : '2px solid transparent'};
+                " onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                  ${gameState.notesMode ? '✓ Modo Notas ON' : '○ Modo Normal'}
+                </button>
+                <button onclick="autoFillNotes()" style="
+                  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                  color: white;
+                  padding: 12px;
+                  border: none;
+                  border-radius: 10px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                " onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                  ✨ Auto-llenar [A]
+                </button>
+                <button onclick="clearCellNotes()" style="
+                  background: rgba(239,68,68,0.7);
+                  color: white;
+                  padding: 12px;
+                  border: none;
+                  border-radius: 10px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                ">🗑️ Borrar celda</button>
+                <button onclick="clearCellNotes()" style="
+                  background: rgba(239,68,68,0.7);
+                  color: white;
+                  padding: 12px;
+                  border: none;
+                  border-radius: 10px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                ">🗑️ Borrar celda</button>
+                <button onclick="clearAllNotes()" style="
+                  background: rgba(239,68,68,0.5);
+                  color: white;
+                  padding: 12px;
+                  border: none;
+                  border-radius: 10px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                ">🗑️ Borrar todas</button>
+              </div>
+              <div style="background: rgba(139,92,246,0.1); padding: 12px; border-radius: 10px; color: ${theme.text}; font-size: 12px; line-height: 1.5;">
+                <strong>💡 Consejo:</strong> Usa el modo anotaciones para marcar candidatos posibles. Las notas se limpian automáticamente al ingresar un número correcto.
+              </div>
+            </div>
+
+            <!-- Controles principales -->
             <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
               <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px;">
                 ${!gameState.expertMode ? `
@@ -1032,19 +1299,6 @@ function renderGame() {
                 <button onclick="getHint()" style="background: rgba(234,179,8,0.8); color: white; padding: 10px; border: none; border-radius: 10px; font-size: 13px; font-weight: bold; cursor: pointer;">💡 Pista (<span id="hints">${gameState.hintsUsed}</span>)</button>
                 ` : '<div></div><div></div>'}
                 <button onclick="saveGame()" style="background: rgba(16,185,129,0.8); color: white; padding: 10px; border: none; border-radius: 10px; font-size: 13px; font-weight: bold; cursor: pointer;">💾 Guardar</button>
-              </div>
-              <div style="margin-bottom: 15px;">
-                <button onclick="toggleNotesMode()" style="
-                  background: ${gameState.notesMode ? 'rgba(139,92,246,0.8)' : 'rgba(255,255,255,0.2)'};
-                  color: white;
-                  padding: 10px;
-                  border: none;
-                  border-radius: 10px;
-                  font-size: 13px;
-                  font-weight: bold;
-                  cursor: pointer;
-                  width: 100%;
-                ">📝 Modo Notas: ${gameState.notesMode ? 'ON' : 'OFF'} [N]</button>
               </div>
               <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;">
                 ${[1,2,3,4,5,6,7,8,9].map(num => `
@@ -1066,7 +1320,7 @@ function renderGame() {
           </div>
 
           <!-- Columna derecha: Información -->
-          <div style="display: flex; flex-direction: column; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto; max-height: calc(100vh - 20px);">
             <!-- Progreso -->
             <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
               <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">📊 Progreso</h3>
@@ -1125,6 +1379,17 @@ function renderGame() {
                 <p style="margin: 0;"><strong>Eliminación:</strong> Descarta por fila, columna y cuadro.</p>
               </div>
             </div>
+
+            <!-- Atajos -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">⌨️ Atajos</h3>
+              <div style="color: ${theme.text}; font-size: 11px; line-height: 1.6; opacity: 0.9;">
+                <div><strong>N:</strong> Modo notas</div>
+                <div><strong>A:</strong> Auto-llenar</div>
+                <div><strong>Delete:</strong> Borrar</div>
+                <div><strong>Ctrl+D:</strong> Borrar todas</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1161,15 +1426,33 @@ function renderBoard(conflicts = []) {
       let borderRight = (j % 3 === 2 && j !== 8) ? '3px solid #1f2937' : '1px solid #d1d5db';
       let borderBottom = (i % 3 === 2 && i !== 8) ? '3px solid #1f2937' : '1px solid #d1d5db';
       
+      // Renderizar contenido de la celda
+      let cellContent = '';
+      if (displayValue) {
+        cellContent = displayValue;
+      } else if (notes && notes.size > 0) {
+        // Mostrar notas en una cuadrícula 3x3
+        const notesArray = Array.from(notes).sort();
+        cellContent = `
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; width: 100%; height: 100%; padding: 2px;">
+            ${[1,2,3,4,5,6,7,8,9].map(n => 
+              `<div style="font-size: 9px; color: #6b7280; display: flex; align-items: center; justify-content: center;">
+                ${notesArray.includes(n) ? n : ''}
+              </div>`
+            ).join('')}
+          </div>
+        `;
+      }
+      
       html += `
         <div onclick="selectCell(${i}, ${j})" style="
-          width: 56px;
-          height: 56px;
+          width: 45px;
+          height: 45px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: ${notes && notes.size > 0 && !displayValue ? '11px' : '24px'};
-          font-weight: bold;
+          font-size: ${displayValue ? '18px' : '8px'};
+          font-weight: ${displayValue ? 'bold' : 'normal'};
           background: ${bgColor};
           color: ${textColor};
           border-right: ${borderRight};
@@ -1179,11 +1462,7 @@ function renderBoard(conflicts = []) {
           ${isSelected ? 'box-shadow: inset 0 0 0 3px #3b82f6;' : ''}
           position: relative;
         ">
-          ${displayValue ? displayValue : (notes && notes.size > 0 ? 
-            `<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; font-size: 10px; color: #6b7280;">
-              ${[1,2,3,4,5,6,7,8,9].map(n => notes.has(n) ? n : '&nbsp;').join('')}
-            </div>` 
-            : '')}
+          ${cellContent}
         </div>
       `;
     }
@@ -1195,7 +1474,14 @@ function renderBoard(conflicts = []) {
 
 function updateTimer() {
   const timerEl = document.getElementById('timer');
-  if (timerEl) timerEl.textContent = formatTime(gameState.timer);
+  if (timerEl) {
+    if (gameState.timeAttackMode) {
+      const timeLeft = gameState.timeAttackLimit - gameState.timer;
+      timerEl.textContent = formatTime(timeLeft);
+    } else {
+      timerEl.textContent = formatTime(gameState.timer);
+    }
+  }
 }
 
 function updateMistakes() {
@@ -1223,21 +1509,21 @@ function showWinScreen() {
         <div style="font-size: 32px; color: rgba(255,255,255,0.9); margin-bottom: 50px;">Sudoku completado</div>
         
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 40px;">
-          <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 20px;">
+          <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 20px;">
             <div style="font-size: 40px; font-weight: bold; color: white;">${formatTime(gameState.timer)}</div>
             <div style="color: rgba(255,255,255,0.8); font-size: 14px;">Tiempo</div>
           </div>
-          <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 20px;">
+          <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 20px;">
             <div style="font-size: 40px; font-weight: bold; color: white;">${gameState.mistakes}</div>
             <div style="color: rgba(255,255,255,0.8); font-size: 14px;">Errores</div>
           </div>
-          <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 20px;">
+          <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 20px;">
             <div style="font-size: 40px; font-weight: bold; color: white;">${gameState.hintsUsed}</div>
             <div style="color: rgba(255,255,255,0.8); font-size: 14px;">Pistas</div>
           </div>
         </div>
 
-        <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 20px; margin-bottom: 40px;">
+        <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 20px; margin-bottom: 40px;">
           <h3 style="color: white; font-size: 24px; margin-bottom: 20px;">📊 Tus estadísticas</h3>
           <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; color: white;">
             <div>
@@ -1293,4 +1579,4 @@ function showWinScreen() {
 // Inicializar la aplicación
 document.addEventListener('DOMContentLoaded', () => {
   renderMenu();
-}); 
+});
