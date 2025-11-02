@@ -499,7 +499,14 @@ function toggleNotesMode() {
   gameState.notesMode = !gameState.notesMode;
   gameState.sound.click();
   showNotification(gameState.notesMode ? '📝 Modo Anotaciones: ON' : '✏️ Modo Normal: ON');
-  renderGame();
+  
+  const notesButton = document.querySelector('button[onclick="toggleNotesMode()"]');
+  if (notesButton) {
+    notesButton.textContent = gameState.notesMode ? '✓ Modo ON' : '○ Modo OFF';
+    notesButton.style.background = gameState.notesMode ? 
+      'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)' : 'rgba(139,92,246,0.3)';
+    notesButton.style.border = gameState.notesMode ? '2px solid #a78bfa' : '2px solid transparent';
+  }
 }
 
 function clearAllNotes() {
@@ -644,7 +651,6 @@ function showTimeUpScreen() {
   `;
 }
 
-// Funciones del juego actualizadas para Opción 1
 async function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack = false, isExpert = false) {
   try {
     gameState.difficulty = difficulty;
@@ -731,16 +737,10 @@ async function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack =
 }
 
 function selectCell(row, col) {
-  // Solo permitir seleccionar celdas editables
-  if (gameState.currentPuzzle && gameState.currentPuzzle.puzzle[row][col] === 0) {
-    gameState.selectedCell = [row, col];
-    gameState.sound.click();
-  } else {
-    // Si es una celda fija, solo sonido
-    gameState.sound.click();
-    return; // No cambiar selección
-  }
-  renderBoard(); // Solo renderizar el tablero, no todo el juego
+  gameState.selectedCell = [row, col];
+  gameState.sound.click();
+  
+  renderBoard();
 }
 
 async function inputNumber(num) {
@@ -751,7 +751,7 @@ async function inputNumber(num) {
   
   const [row, col] = gameState.selectedCell;
   
-  // Verificar que la celda sea editable
+  // Verificar que la celda sea editable (no fija)
   if (gameState.currentPuzzle.puzzle[row][col] !== 0) {
     showNotification('❌ No puedes modificar celdas fijas');
     return;
@@ -806,7 +806,6 @@ async function inputNumber(num) {
             notesMode: false
           });
           
-          // Actualizar estado local con la respuesta del servidor
           gameState.userBoard = response.userBoard || gameState.userBoard;
           gameState.mistakes = response.mistakes || gameState.mistakes;
           gameState.notes = response.notes || gameState.notes;
@@ -837,12 +836,10 @@ async function inputNumber(num) {
         } else {
           gameState.userBoard[row][col] = num;
           
-          // Limpiar anotaciones de esta celda
           if (gameState.notes[key]) {
             delete gameState.notes[key];
           }
           
-          // Verificar si es correcto (solo en modo offline con solución)
           if (gameState.currentPuzzle.solution) {
             const isCorrect = num === gameState.currentPuzzle.solution[row][col];
             
@@ -854,11 +851,9 @@ async function inputNumber(num) {
               cleanRelatedNotes(row, col, num);
             }
           } else {
-            // Si no hay solución (modo online), solo sonido de input
             gameState.sound.input();
           }
           
-          // Solo guardar en el historial si es un cambio real
           if (oldValue !== num && !gameState.expertMode) {
             gameState.moveHistory.push({
               row,
@@ -1777,8 +1772,6 @@ function renderGame() {
   const timeLeft = gameState.timeAttackMode ? gameState.timeAttackLimit - gameState.timer : 0;
   const timeWarning = gameState.timeAttackMode && timeLeft < 60;
   
-  const totalNotes = Object.keys(gameState.notes).length;
-  
   const root = document.getElementById('root');
   root.innerHTML = `
     <div style="height: 100vh; background: ${theme.bg}; padding: 10px; overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;">
@@ -1791,14 +1784,13 @@ function renderGame() {
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                   <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 18px;">🏠</button>
-                  <button onclick="window.electron.closeApp()" style="background: rgba(239,68,68,0.8); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: bold;">✕ Cerrar</button>
                   <div style="color: ${theme.text};">
                     <div style="font-size: 20px; font-weight: bold; text-transform: uppercase;">
                       ${gameState.difficulty} 
                       ${gameState.expertMode ? '💪' : ''} 
                       ${gameState.timeAttackMode ? '⏱️' : ''}
                     </div>
-                    <div style="font-size: 12px; opacity: 0.8;">${gameState.currentPuzzle.clues} pistas • ${gameState.moveHistory.length} movimientos</div>
+                    <div style="font-size: 12px; opacity: 0.8;">${gameState.currentPuzzle.clues} pistas</div>
                   </div>
                 </div>
                 <div style="text-align: right; color: ${theme.text};">
@@ -1925,7 +1917,7 @@ function renderGame() {
                 width: 100%;
                 margin-bottom: 8px;
               ">🎨 Cambiar tema</button>
-              <button onclick="gameState.sound.toggle(); renderGame();" style="
+              <button onclick="gameState.sound.toggle(); showNotification(gameState.sound.enabled ? '🔊 Sonido activado' : '🔇 Sonido desactivado');" style="
                 background: rgba(102, 126, 234, 0.2);
                 color: ${theme.text};
                 padding: 10px 14px;
@@ -1937,22 +1929,13 @@ function renderGame() {
                 width: 100%;
               ">${gameState.sound.enabled ? '🔊' : '🔇'} ${gameState.sound.enabled ? 'Silenciar' : 'Activar'}</button>
             </div>
-
-            <!-- Atajos -->
-            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
-              <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">⌨️ Atajos</h3>
-              <div style="color: ${theme.text}; font-size: 11px; line-height: 1.6; opacity: 0.9;">
-                <div><strong>N:</strong> Modo notas</div>
-                <div><strong>A:</strong> Auto-llenar</div>
-                <div><strong>Delete:</strong> Borrar</div>
-                <div><strong>Ctrl+D:</strong> Borrar todas</div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
     </div>
   `;
+  
+  // Renderizar el tablero después de crear la estructura
   renderBoard(conflicts);
 }
 
@@ -1972,10 +1955,10 @@ function renderBoard(conflicts = []) {
   if (gameState.selectedCell) {
     selectedRow = gameState.selectedCell[0];
     selectedCol = gameState.selectedCell[1];
-    selectedValue = gameState.userBoard[selectedRow][selectedCol];
-    if (selectedValue === 0) {
-      selectedValue = gameState.currentPuzzle.puzzle[selectedRow][selectedCol];
-    }
+    // Obtener el valor de la celda seleccionada (puede ser fija o del usuario)
+    selectedValue = gameState.currentPuzzle.puzzle[selectedRow][selectedCol] !== 0 
+      ? gameState.currentPuzzle.puzzle[selectedRow][selectedCol] 
+      : gameState.userBoard[selectedRow][selectedCol];
   }
   
   let html = '<div style="display: inline-block; background: #374151; padding: 4px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">';
@@ -1994,11 +1977,11 @@ function renderBoard(conflicts = []) {
       const isError = !isGiven && userValue !== 0 && gameState.currentPuzzle.solution && 
                      userValue !== gameState.currentPuzzle.solution[i][j];
       
-      // Determinar colores y estilos - CORREGIDO
+      // Determinar colores base
       let bgColor, textColor;
       
       if (isSelected) {
-        bgColor = '#3b82f6'; // Azul para seleccionado
+        bgColor = '#3b82f6'; // Azul intenso para celda seleccionada
         textColor = 'white';
       } else if (isGiven) {
         bgColor = '#f3f4f6'; // Gris claro para celdas fijas
@@ -2011,24 +1994,31 @@ function renderBoard(conflicts = []) {
         textColor = '#2563eb';
       }
       
-      // Resaltar fila, columna y cuadro de la celda seleccionada - CORREGIDO
-      if (selectedRow !== null && !isSelected) {
+      // SISTEMA DE RESALTADOS MEJORADO
+      if (selectedValue !== null && selectedValue !== 0 && !isSelected) {
         const sameRow = i === selectedRow;
         const sameCol = j === selectedCol;
         const sameBox = Math.floor(i / 3) === Math.floor(selectedRow / 3) && 
                        Math.floor(j / 3) === Math.floor(selectedCol / 3);
-        const sameNumber = selectedValue !== 0 && displayValue === selectedValue;
+        const sameNumber = displayValue === selectedValue;
         
         if (sameNumber) {
-          bgColor = '#bfdbfe'; // Azul más intenso para números iguales
+          // RESALTAR NÚMEROS IGUALES - Color más intenso
+          bgColor = '#60a5fa'; // Azul medio para números iguales
+          textColor = 'white';
         } else if (sameRow || sameCol) {
-          bgColor = '#eff6ff'; // Azul claro para fila/columna
+          // RESALTAR FILA Y COLUMNA - Color suave
+          bgColor = '#dbeafe'; // Azul muy claro para fila/columna
+          if (isGiven) {
+            textColor = '#1e40af'; // Texto más oscuro para celdas fijas
+          }
         } else if (sameBox) {
-          bgColor = '#f0f9ff'; // Azul muy claro para cuadro
+          // RESALTAR CUADRO 3x3 - Color muy suave
+          bgColor = '#eff6ff'; // Azul casi blanco para el cuadro
         }
       }
       
-      // Bordes más gruesos para los cuadros 3x3
+      // Bordes para los cuadros 3x3
       const borderRight = (j % 3 === 2 && j !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
       const borderBottom = (i % 3 === 2 && i !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
       
@@ -2037,7 +2027,6 @@ function renderBoard(conflicts = []) {
       if (displayValue !== 0) {
         cellContent = `<div style="font-size: ${fontSize}px; font-weight: bold;">${displayValue}</div>`;
       } else if (notes && notes.size > 0) {
-        // Mostrar notas en grid 3x3
         const notesArray = Array.from(notes).sort();
         cellContent = `
           <div style="display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 100%; padding: 2px; gap: 1px;">
@@ -2061,7 +2050,7 @@ function renderBoard(conflicts = []) {
           color: ${textColor};
           border-right: ${borderRight};
           border-bottom: ${borderBottom};
-          cursor: ${isGiven ? 'default' : 'pointer'};
+          cursor: pointer;
           transition: all 0.15s;
           user-select: none;
           ${isSelected ? 'box-shadow: inset 0 0 0 2px #1d4ed8; z-index: 1;' : ''}
