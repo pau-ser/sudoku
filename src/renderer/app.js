@@ -191,6 +191,32 @@ const gameState = {
   sound: new SoundSystem()
 };
 
+// Sistema de escalado responsivo
+function getScaleFactor() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  
+  // Tamaño base más conservador
+  const baseWidth = 1366; // Resolución más común
+  const baseHeight = 768;
+  
+  const scaleX = width / baseWidth;
+  const scaleY = height / baseHeight;
+  
+  // Usar el menor factor, con mínimo de 0.8 y máximo de 1.5
+  const scale = Math.min(scaleX, scaleY);
+  return Math.max(0.8, Math.min(scale, 1.5));
+}
+
+function getCellSize() {
+  const scale = getScaleFactor();
+  return Math.floor(50 * scale); // Cambiado de 45 a 50
+}
+
+function getFontSize(base) {
+  const scale = getScaleFactor();
+  return Math.floor(base * scale);
+}
 // Temas
 const themes = {
   dark: {
@@ -562,7 +588,6 @@ function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack = false
 }
 
 function selectCell(row, col) {
-  if (gameState.currentPuzzle.puzzle[row][col] !== 0) return;
   gameState.selectedCell = [row, col];
   gameState.sound.click();
   renderBoard();
@@ -918,6 +943,9 @@ function renderMenu() {
   root.innerHTML = `
     <div style="height: 100vh; background: ${theme.menuBg}; padding: 20px; overflow-y: scroll; box-sizing: border-box; display: flex; flex-direction: column;">
       <div style="max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; overflow-y: auto;">
+        <div style="text-align: right; margin-bottom: 20px;">
+          <button onclick="window.close()" style="background: rgba(239,68,68,0.8); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: bold;">✕ Cerrar</button>
+        </div>
         <div style="text-align: center; margin-bottom: 50px;">
           <h1 style="font-size: 64px; font-weight: bold; color: white; margin: 0 0 15px 0; letter-spacing: -2px;">SUDOKU PRO</h1>
           <p style="font-size: 20px; color: rgba(255,255,255,0.9);">Lógica pura. Solución única garantizada.</p>
@@ -1203,6 +1231,7 @@ function renderGame() {
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                   <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 18px;">🏠</button>
+                  <button onclick="window.close()" style="background: rgba(239,68,68,0.8); border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 18px;">✕</button>
                   <div style="color: ${theme.text};">
                     <div style="font-size: 20px; font-weight: bold; text-transform: uppercase;">
                       ${gameState.difficulty} 
@@ -1348,7 +1377,7 @@ function renderGame() {
                 width: 100%;
               ">${gameState.sound.enabled ? '🔊' : '🔇'} ${gameState.sound.enabled ? 'Silenciar' : 'Activar'}</button>
             </div>
-            
+
             <!-- Atajos -->
             <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
               <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">⌨️ Atajos</h3>
@@ -1370,6 +1399,23 @@ function renderGame() {
 function renderBoard(conflicts = []) {
   const boardEl = document.getElementById('board');
   if (!boardEl) return;
+
+  const cellSize = getCellSize();
+  const fontSize = getFontSize(18);
+  const noteFontSize = getFontSize(9);
+  
+  // Obtener el valor seleccionado
+  let selectedValue = null;
+  let selectedRow = null;
+  let selectedCol = null;
+  if (gameState.selectedCell) {
+    selectedRow = gameState.selectedCell[0];
+    selectedCol = gameState.selectedCell[1];
+    selectedValue = gameState.userBoard[selectedRow][selectedCol];
+    if (selectedValue === 0) {
+      selectedValue = gameState.currentPuzzle.puzzle[selectedRow][selectedCol];
+    }
+  }
   
   let html = '<div style="display: inline-block; background: #1f2937; padding: 4px; border-radius: 15px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">';
   
@@ -1386,8 +1432,16 @@ function renderBoard(conflicts = []) {
       
       const isError = !isGiven && userValue !== 0 && userValue !== gameState.currentPuzzle.solution[i][j];
       
+      // Nuevo: detectar si debe resaltarse
+      const shouldHighlightSame = selectedValue && selectedValue !== 0 && displayValue === selectedValue && !isSelected;
+      const shouldHighlightRow = selectedRow !== null && i === selectedRow && !isSelected;
+      const shouldHighlightCol = selectedCol !== null && j === selectedCol && !isSelected;
+      const shouldHighlight = shouldHighlightSame || shouldHighlightRow || shouldHighlightCol;
+      
       let bgColor = gameState.customColors.user;
       if (isSelected) bgColor = gameState.customColors.selected;
+      else if (shouldHighlightSame) bgColor = '#bfdbfe'; // Azul más intenso para números iguales
+      else if (shouldHighlight) bgColor = '#e0e7ff'; // Azul claro para fila/columna
       else if (isGiven) bgColor = gameState.customColors.given;
       else if (isError || hasConflict) bgColor = gameState.customColors.error;
       
@@ -1415,12 +1469,12 @@ function renderBoard(conflicts = []) {
       
       html += `
         <div onclick="selectCell(${i}, ${j})" style="
-          width: 45px;
-          height: 45px;
+          width: ${cellSize}px;
+          height: ${cellSize}px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: ${displayValue ? '18px' : '8px'};
+          font-size: ${displayValue ? fontSize : noteFontSize}px;
           font-weight: ${displayValue ? 'bold' : 'normal'};
           background: ${bgColor};
           color: ${textColor};
@@ -1548,4 +1602,13 @@ function showWinScreen() {
 // Inicializar la aplicación
 document.addEventListener('DOMContentLoaded', () => {
   renderMenu();
+});
+
+// Listener para redimensionar ventana
+window.addEventListener('resize', () => {
+  if (gameState.currentPuzzle) {
+    renderGame();
+  } else {
+    renderMenu();
+  }
 });
