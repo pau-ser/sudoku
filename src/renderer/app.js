@@ -1,5 +1,14 @@
-// app.js - Versión completa con todas las mejoras
+// app.js - Versión completa mejorada
 // Copia este archivo en src/renderer/app.js
+
+// Función seed para random determinístico
+Math.seedrandom = function(seed) {
+  let state = seed;
+  Math.random = function() {
+    state = (state * 9301 + 49297) % 233280;
+    return state / 233280;
+  };
+};
 
 class SudokuSolver {
   constructor(board) {
@@ -54,7 +63,9 @@ class SudokuSolver {
 }
 
 class SudokuGenerator {
-  generateComplete() {
+  generateComplete(seed = null) {
+    if (seed !== null) Math.seedrandom(seed);
+    
     const board = Array(9).fill(null).map(() => Array(9).fill(0));
     for (let box = 0; box < 9; box += 3) {
       const nums = [1,2,3,4,5,6,7,8,9].sort(() => Math.random() - 0.5);
@@ -71,8 +82,6 @@ class SudokuGenerator {
   }
 
   generate(difficulty, seed = null) {
-    if (seed) Math.seedrandom(seed); // Para daily challenge
-    
     const settings = {
       easy: { minClues: 40, maxClues: 45 },
       medium: { minClues: 32, maxClues: 35 },
@@ -81,7 +90,7 @@ class SudokuGenerator {
       master: { minClues: 22, maxClues: 24 }
     }[difficulty];
 
-    const solution = this.generateComplete();
+    const solution = this.generateComplete(seed);
     const puzzle = solution.map(row => [...row]);
     const positions = [];
     for (let i = 0; i < 9; i++) {
@@ -105,7 +114,7 @@ class SudokuGenerator {
   }
 }
 
-// Sistema de sonidos
+// Sistema de sonidos mejorado
 class SoundSystem {
   constructor() {
     this.enabled = JSON.parse(localStorage.getItem('sudoku-sound') || 'true');
@@ -142,10 +151,11 @@ class SoundSystem {
   input() { this.playTone(600, 0.1); }
   error() { this.playTone(200, 0.2, 'sawtooth'); }
   hint() { this.playTone(1000, 0.15); }
+  tick() { this.playTone(1200, 0.03); }
   complete() {
-    this.playTone(523, 0.15); // C
-    setTimeout(() => this.playTone(659, 0.15), 150); // E
-    setTimeout(() => this.playTone(784, 0.3), 300); // G
+    this.playTone(523, 0.15);
+    setTimeout(() => this.playTone(659, 0.15), 150);
+    setTimeout(() => this.playTone(784, 0.3), 300);
   }
 
   toggle() {
@@ -165,10 +175,19 @@ const gameState = {
   difficulty: 'medium',
   timerInterval: null,
   theme: localStorage.getItem('sudoku-theme') || 'dark',
-  moveHistory: [], // Para deshacer
-  stats: JSON.parse(localStorage.getItem('sudoku-stats') || '{"gamesWon":0,"bestTime":"--:--","streak":0,"totalTime":0}'),
+  moveHistory: [],
+  notes: {}, // Para modo notas
+  notesMode: false,
+  autoCheck: JSON.parse(localStorage.getItem('sudoku-autocheck') || 'true'),
+  expertMode: false,
+  timeAttackMode: false,
+  timeAttackLimit: 600, // 10 minutos
+  stats: JSON.parse(localStorage.getItem('sudoku-stats') || '{"gamesWon":0,"bestTime":"--:--","streak":0,"totalTime":0,"byDifficulty":{}}'),
   savedGames: JSON.parse(localStorage.getItem('sudoku-saved') || '[]'),
   dailyChallenge: JSON.parse(localStorage.getItem('sudoku-daily') || 'null'),
+  leaderboard: JSON.parse(localStorage.getItem('sudoku-leaderboard') || '[]'),
+  progressData: JSON.parse(localStorage.getItem('sudoku-progress') || '{"dates":[],"times":[],"accuracies":[]}'),
+  customColors: JSON.parse(localStorage.getItem('sudoku-colors') || '{"given":"#f3f4f6","selected":"#93c5fd","user":"#ffffff","error":"#fecaca"}'),
   sound: new SoundSystem()
 };
 
@@ -191,6 +210,18 @@ const themes = {
     cardBg: 'rgba(255,255,255,0.1)',
     text: 'white',
     menuBg: 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+  },
+  sunset: {
+    bg: 'linear-gradient(135deg, #7c2d12 0%, #ea580c 100%)',
+    cardBg: 'rgba(255,255,255,0.1)',
+    text: 'white',
+    menuBg: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)'
+  },
+  ocean: {
+    bg: 'linear-gradient(135deg, #0c4a6e 0%, #0369a1 100%)',
+    cardBg: 'rgba(255,255,255,0.1)',
+    text: 'white',
+    menuBg: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)'
   }
 };
 
@@ -205,6 +236,41 @@ function saveStats() {
   localStorage.setItem('sudoku-stats', JSON.stringify(gameState.stats));
 }
 
+function saveToLeaderboard() {
+  const entry = {
+    id: Date.now(),
+    difficulty: gameState.difficulty,
+    time: gameState.timer,
+    mistakes: gameState.mistakes,
+    hintsUsed: gameState.hintsUsed,
+    date: new Date().toLocaleDateString()
+  };
+  
+  gameState.leaderboard.push(entry);
+  gameState.leaderboard.sort((a, b) => a.time - b.time);
+  gameState.leaderboard = gameState.leaderboard.slice(0, 10);
+  localStorage.setItem('sudoku-leaderboard', JSON.stringify(gameState.leaderboard));
+}
+
+function saveProgress() {
+  const today = new Date().toLocaleDateString();
+  const accuracy = gameState.userBoard.flat().filter(c => c !== 0).length > 0 ?
+    Math.round((1 - gameState.mistakes / gameState.userBoard.flat().filter(c => c !== 0).length) * 100) : 100;
+  
+  gameState.progressData.dates.push(today);
+  gameState.progressData.times.push(gameState.timer);
+  gameState.progressData.accuracies.push(accuracy);
+  
+  // Mantener solo últimos 30 días
+  if (gameState.progressData.dates.length > 30) {
+    gameState.progressData.dates.shift();
+    gameState.progressData.times.shift();
+    gameState.progressData.accuracies.shift();
+  }
+  
+  localStorage.setItem('sudoku-progress', JSON.stringify(gameState.progressData));
+}
+
 function saveGame() {
   if (!gameState.currentPuzzle) return;
   
@@ -217,14 +283,17 @@ function saveGame() {
     mistakes: gameState.mistakes,
     hintsUsed: gameState.hintsUsed,
     date: new Date().toLocaleString(),
-    moveHistory: gameState.moveHistory
+    moveHistory: gameState.moveHistory,
+    notes: gameState.notes,
+    expertMode: gameState.expertMode,
+    timeAttackMode: gameState.timeAttackMode
   };
   
   gameState.savedGames.unshift(saved);
-  gameState.savedGames = gameState.savedGames.slice(0, 5); // Mantener solo 5
+  gameState.savedGames = gameState.savedGames.slice(0, 5);
   localStorage.setItem('sudoku-saved', JSON.stringify(gameState.savedGames));
   gameState.sound.hint();
-  alert('✅ Partida guardada correctamente');
+  showNotification('✅ Partida guardada');
 }
 
 function loadGame(id) {
@@ -238,10 +307,19 @@ function loadGame(id) {
   gameState.mistakes = saved.mistakes;
   gameState.hintsUsed = saved.hintsUsed;
   gameState.moveHistory = saved.moveHistory || [];
+  gameState.notes = saved.notes || {};
+  gameState.expertMode = saved.expertMode || false;
+  gameState.timeAttackMode = saved.timeAttackMode || false;
   
   if (gameState.timerInterval) clearInterval(gameState.timerInterval);
   gameState.timerInterval = setInterval(() => {
+    if (gameState.timeAttackMode && gameState.timer >= gameState.timeAttackLimit) {
+      clearInterval(gameState.timerInterval);
+      showTimeUpScreen();
+      return;
+    }
     gameState.timer++;
+    if (gameState.timer % 60 === 0) gameState.sound.tick();
     updateTimer();
   }, 1000);
   
@@ -256,16 +334,20 @@ function getDailyChallenge() {
     return gameState.dailyChallenge;
   }
   
-  // Generar nuevo daily challenge
-  const seed = today; // Mismo seed = mismo puzzle
+  // Generar nuevo daily challenge con seed basado en fecha
+  const seedValue = new Date().getFullYear() * 10000 + 
+                    (new Date().getMonth() + 1) * 100 + 
+                    new Date().getDate();
+  
   const generator = new SudokuGenerator();
-  const puzzle = generator.generate('hard', seed);
+  const puzzle = generator.generate('hard', seedValue);
   
   const daily = {
     date: today,
     puzzle: puzzle,
     completed: false,
-    time: null
+    time: null,
+    mistakes: null
   };
   
   gameState.dailyChallenge = daily;
@@ -280,7 +362,6 @@ function toggleTheme() {
   gameState.theme = themeKeys[nextIndex];
   localStorage.setItem('sudoku-theme', gameState.theme);
   
-  // Re-renderizar la pantalla actual
   if (gameState.currentPuzzle) {
     renderGame();
   } else {
@@ -288,14 +369,44 @@ function toggleTheme() {
   }
 }
 
+function toggleNotesMode() {
+  gameState.notesMode = !gameState.notesMode;
+  gameState.sound.click();
+  renderGame();
+}
+
+function showNotification(message) {
+  const notif = document.createElement('div');
+  notif.textContent = message;
+  notif.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(0,0,0,0.8);
+    color: white;
+    padding: 15px 25px;
+    border-radius: 10px;
+    font-weight: bold;
+    z-index: 1000;
+    animation: slideIn 0.3s;
+  `;
+  document.body.appendChild(notif);
+  setTimeout(() => {
+    notif.style.animation = 'slideOut 0.3s';
+    setTimeout(() => notif.remove(), 300);
+  }, 2000);
+}
+
 // Funciones del juego
-function startNewGame(difficulty, isDailyChallenge = false) {
+function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack = false, isExpert = false) {
   gameState.difficulty = difficulty;
+  gameState.timeAttackMode = isTimeAttack;
+  gameState.expertMode = isExpert;
   
   if (isDailyChallenge) {
     const daily = getDailyChallenge();
     if (daily.completed) {
-      alert('Ya completaste el reto diario de hoy 🎉\n¡Vuelve mañana!');
+      showNotification('Ya completaste el reto diario 🎉');
       return;
     }
     gameState.currentPuzzle = daily.puzzle;
@@ -310,10 +421,18 @@ function startNewGame(difficulty, isDailyChallenge = false) {
   gameState.mistakes = 0;
   gameState.hintsUsed = 0;
   gameState.moveHistory = [];
+  gameState.notes = {};
+  gameState.notesMode = false;
   
   if (gameState.timerInterval) clearInterval(gameState.timerInterval);
   gameState.timerInterval = setInterval(() => {
+    if (gameState.timeAttackMode && gameState.timer >= gameState.timeAttackLimit) {
+      clearInterval(gameState.timerInterval);
+      showTimeUpScreen();
+      return;
+    }
     gameState.timer++;
+    if (gameState.timer % 60 === 0) gameState.sound.tick();
     updateTimer();
   }, 1000);
   
@@ -333,15 +452,37 @@ function inputNumber(num) {
   const [row, col] = gameState.selectedCell;
   if (gameState.currentPuzzle.puzzle[row][col] !== 0) return;
   
-  // Guardar en historial
-  gameState.moveHistory.push({
-    row,
-    col,
-    oldValue: gameState.userBoard[row][col],
-    newValue: num
-  });
+  if (gameState.notesMode) {
+    // Modo notas
+    const key = `${row}-${col}`;
+    if (!gameState.notes[key]) gameState.notes[key] = new Set();
+    
+    if (gameState.notes[key].has(num)) {
+      gameState.notes[key].delete(num);
+    } else {
+      gameState.notes[key].add(num);
+    }
+    gameState.sound.click();
+    renderBoard();
+    return;
+  }
+  
+  // Modo normal
+  if (!gameState.expertMode) {
+    gameState.moveHistory.push({
+      row,
+      col,
+      oldValue: gameState.userBoard[row][col],
+      newValue: num,
+      oldNotes: gameState.notes[`${row}-${col}`] ? new Set(gameState.notes[`${row}-${col}`]) : null
+    });
+  }
   
   gameState.userBoard[row][col] = gameState.userBoard[row][col] === num ? 0 : num;
+  
+  // Limpiar notas de esta celda
+  const key = `${row}-${col}`;
+  if (gameState.notes[key]) delete gameState.notes[key];
   
   if (num !== 0 && num !== gameState.currentPuzzle.solution[row][col]) {
     gameState.mistakes++;
@@ -366,6 +507,17 @@ function checkWin() {
     gameState.stats.streak++;
     gameState.stats.totalTime += gameState.timer;
     
+    // Estadísticas por dificultad
+    if (!gameState.stats.byDifficulty[gameState.difficulty]) {
+      gameState.stats.byDifficulty[gameState.difficulty] = { won: 0, bestTime: null };
+    }
+    gameState.stats.byDifficulty[gameState.difficulty].won++;
+    
+    const diffBest = gameState.stats.byDifficulty[gameState.difficulty].bestTime;
+    if (!diffBest || gameState.timer < diffBest) {
+      gameState.stats.byDifficulty[gameState.difficulty].bestTime = gameState.timer;
+    }
+    
     if (gameState.stats.bestTime === '--:--') {
       gameState.stats.bestTime = formatTime(gameState.timer);
     } else {
@@ -376,22 +528,32 @@ function checkWin() {
       }
     }
     
-    // Marcar daily challenge como completado
-    if (gameState.dailyChallenge && !gameState.dailyChallenge.completed) {
-      gameState.dailyChallenge.completed = true;
-      gameState.dailyChallenge.time = gameState.timer;
-      localStorage.setItem('sudoku-daily', JSON.stringify(gameState.dailyChallenge));
+    // Daily challenge
+    if (gameState.dailyChallenge && gameState.dailyChallenge.date === new Date().toDateString()) {
+      if (!gameState.dailyChallenge.completed) {
+        gameState.dailyChallenge.completed = true;
+        gameState.dailyChallenge.time = gameState.timer;
+        gameState.dailyChallenge.mistakes = gameState.mistakes;
+        localStorage.setItem('sudoku-daily', JSON.stringify(gameState.dailyChallenge));
+      }
     }
     
     saveStats();
+    saveToLeaderboard();
+    saveProgress();
     gameState.sound.complete();
     showWinScreen();
   }
 }
 
 function getHint() {
+  if (gameState.expertMode) {
+    showNotification('❌ Pistas deshabilitadas en modo experto');
+    return;
+  }
+  
   if (!gameState.selectedCell) {
-    alert('Selecciona una celda primero');
+    showNotification('Selecciona una celda primero');
     return;
   }
   const [row, col] = gameState.selectedCell;
@@ -406,32 +568,84 @@ function getHint() {
 }
 
 function undoMove() {
+  if (gameState.expertMode) {
+    showNotification('❌ Deshacer deshabilitado en modo experto');
+    return;
+  }
+  
   if (gameState.moveHistory.length === 0) {
-    alert('No hay movimientos para deshacer');
+    showNotification('No hay movimientos para deshacer');
     return;
   }
   
   const lastMove = gameState.moveHistory.pop();
   gameState.userBoard[lastMove.row][lastMove.col] = lastMove.oldValue;
+  
+  if (lastMove.oldNotes) {
+    gameState.notes[`${lastMove.row}-${lastMove.col}`] = lastMove.oldNotes;
+  }
+  
   gameState.sound.click();
   renderBoard();
+}
+
+function findConflicts() {
+  const conflicts = [];
+  
+  for (let i = 0; i < 9; i++) {
+    for (let j = 0; j < 9; j++) {
+      const val = gameState.userBoard[i][j];
+      if (val === 0 || gameState.currentPuzzle.puzzle[i][j] !== 0) continue;
+      
+      // Verificar fila
+      for (let k = 0; k < 9; k++) {
+        if (k !== j && gameState.userBoard[i][k] === val) {
+          conflicts.push([i, j]);
+          break;
+        }
+      }
+      
+      // Verificar columna
+      for (let k = 0; k < 9; k++) {
+        if (k !== i && gameState.userBoard[k][j] === val) {
+          if (!conflicts.find(c => c[0] === i && c[1] === j)) {
+            conflicts.push([i, j]);
+          }
+          break;
+        }
+      }
+      
+      // Verificar cuadro
+      const boxRow = Math.floor(i / 3) * 3;
+      const boxCol = Math.floor(j / 3) * 3;
+      for (let r = boxRow; r < boxRow + 3; r++) {
+        for (let c = boxCol; c < boxCol + 3; c++) {
+          if ((r !== i || c !== j) && gameState.userBoard[r][c] === val) {
+            if (!conflicts.find(co => co[0] === i && co[1] === j)) {
+              conflicts.push([i, j]);
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+  
+  return conflicts;
 }
 
 // Manejo de teclado
 document.addEventListener('keydown', (e) => {
   if (!gameState.currentPuzzle) return;
   
-  // Números 1-9
   if (e.key >= '1' && e.key <= '9') {
     inputNumber(parseInt(e.key));
   }
   
-  // Backspace o Delete para borrar
-  if (e.key === 'Backspace' || e.key === 'Delete') {
+  if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
     inputNumber(0);
   }
   
-  // Flechas para navegar
   if (gameState.selectedCell) {
     const [row, col] = gameState.selectedCell;
     let newRow = row;
@@ -447,65 +661,103 @@ document.addEventListener('keydown', (e) => {
     }
   }
   
-  // Ctrl+Z para deshacer
-  if (e.ctrlKey && e.key === 'z') {
+  if (e.ctrlKey && e.key === 'z' && !gameState.expertMode) {
     e.preventDefault();
     undoMove();
   }
   
-  // Ctrl+S para guardar
   if (e.ctrlKey && e.key === 's') {
     e.preventDefault();
     saveGame();
   }
   
-  // H para hint
-  if (e.key === 'h' || e.key === 'H') {
+  if ((e.key === 'h' || e.key === 'H') && !gameState.expertMode) {
     getHint();
   }
+  
+  if (e.key === 'n' || e.key === 'N') {
+    toggleNotesMode();
+  }
 });
+
+// CSS para animaciones
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes slideIn {
+    from { transform: translateX(400px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes slideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(400px); opacity: 0; }
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-30px); }
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.1);
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(102,126,234,0.5);
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(102,126,234,0.8);
+  }
+`;
+document.head.appendChild(style);
 
 // Funciones de renderizado
 function renderMenu() {
   const theme = themes[gameState.theme];
   const root = document.getElementById('root');
   root.innerHTML = `
-    <div style="min-height: 100vh; background: ${theme.menuBg}; display: flex; align-items: center; justify-content: center; padding: 40px;">
-      <div style="max-width: 1200px; width: 100%;">
-        <div style="text-align: center; margin-bottom: 60px;">
-          <h1 style="font-size: 72px; font-weight: bold; color: white; margin: 0 0 20px 0; letter-spacing: -2px;">SUDOKU PRO</h1>
-          <p style="font-size: 24px; color: rgba(255,255,255,0.9);">Lógica pura. Solución única garantizada.</p>
+    <div style="min-height: 100vh; background: ${theme.menuBg}; padding: 40px; overflow-y: auto;">
+      <div style="max-width: 1400px; margin: 0 auto;">
+        <div style="text-align: center; margin-bottom: 50px;">
+          <h1 style="font-size: 64px; font-weight: bold; color: white; margin: 0 0 15px 0; letter-spacing: -2px;">SUDOKU PRO</h1>
+          <p style="font-size: 20px; color: rgba(255,255,255,0.9);">Lógica pura. Solución única garantizada.</p>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 40px;">
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 40px; border: 1px solid rgba(255,255,255,0.2);">
-            <h2 style="font-size: 28px; font-weight: bold; color: white; margin-bottom: 30px;">🎮 Nueva Partida</h2>
-            <div style="display: flex; flex-direction: column; gap: 16px;">
-              <button onclick="startNewGame('easy', true)" style="
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 30px;">
+          <!-- Nueva Partida -->
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">🎮 Nueva Partida</h2>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              <button onclick="startNewGame('hard', true)" style="
                 background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
                 color: white;
-                padding: 20px 30px;
+                padding: 15px 20px;
                 border: none;
-                border-radius: 15px;
-                font-size: 18px;
+                border-radius: 12px;
+                font-size: 16px;
                 font-weight: bold;
                 cursor: pointer;
                 transition: transform 0.2s;
-              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+              " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
                 🏆 Reto Diario
               </button>
               ${['easy', 'medium', 'hard', 'expert', 'master'].map(diff => `
                 <button onclick="startNewGame('${diff}')" style="
                   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                   color: white;
-                  padding: 20px 30px;
+                  padding: 15px 20px;
                   border: none;
-                  border-radius: 15px;
-                  font-size: 18px;
+                  border-radius: 12px;
+                  font-size: 15px;
                   font-weight: bold;
                   cursor: pointer;
                   transition: transform 0.2s;
-                " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
                   ${diff === 'easy' ? '⭐ Fácil' : ''}
                   ${diff === 'medium' ? '⭐⭐ Medio' : ''}
                   ${diff === 'hard' ? '⭐⭐⭐ Difícil' : ''}
@@ -516,82 +768,218 @@ function renderMenu() {
             </div>
           </div>
 
-          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 40px; border: 1px solid rgba(255,255,255,0.2);">
-            <h2 style="font-size: 28px; font-weight: bold; color: white; margin-bottom: 30px;">📊 Estadísticas</h2>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-              <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 20px; text-align: center;">
-                <div style="font-size: 48px; font-weight: bold; color: white;">${gameState.stats.gamesWon}</div>
-                <div style="color: rgba(255,255,255,0.9); font-size: 14px;">Completados</div>
+          <!-- Modos Especiales -->
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">⚡ Modos Especiales</h2>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              <button onclick="startNewGame('medium', false, true)" style="
+                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                color: white;
+                padding: 15px 20px;
+                border: none;
+                border-radius: 12px;
+                font-size: 15px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
+                ⏱️ Contrarreloj (10 min)
+              </button>
+              <button onclick="startNewGame('hard', false, false, true)" style="
+                background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+                color: white;
+                padding: 15px 20px;
+                border: none;
+                border-radius: 12px;
+                font-size: 15px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
+                💪 Modo Experto
+              </button>
+              <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 10px; font-size: 13px; color: rgba(255,255,255,0.8); line-height: 1.4;">
+                <strong>Experto:</strong> Sin pistas ni deshacer
               </div>
-              <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 30px; border-radius: 20px; text-align: center;">
-                <div style="font-size: 48px; font-weight: bold; color: white;">${gameState.stats.bestTime}</div>
-                <div style="color: rgba(255,255,255,0.9); font-size: 14px;">Mejor tiempo</div>
+            </div>
+          </div>
+
+          <!-- Estadísticas -->
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">📊 Estadísticas</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+              <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 15px; text-align: center;">
+                <div style="font-size: 36px; font-weight: bold; color: white;">${gameState.stats.gamesWon}</div>
+                <div style="color: rgba(255,255,255,0.9); font-size: 12px;">Completados</div>
               </div>
-              <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 30px; border-radius: 20px; text-align: center; grid-column: span 2;">
-                <div style="font-size: 48px; font-weight: bold; color: white;">${gameState.stats.streak} 🔥</div>
-                <div style="color: rgba(255,255,255,0.9); font-size: 14px;">Racha actual</div>
+              <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 15px; text-align: center;">
+                <div style="font-size: 36px; font-weight: bold; color: white;">${gameState.stats.bestTime}</div>
+                <div style="color: rgba(255,255,255,0.9); font-size: 12px;">Mejor tiempo</div>
+              </div>
+              <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 20px; border-radius: 15px; text-align: center; grid-column: span 2;">
+                <div style="font-size: 36px; font-weight: bold; color: white;">${gameState.stats.streak} 🔥</div>
+                <div style="color: rgba(255,255,255,0.9); font-size: 12px;">Racha actual</div>
               </div>
             </div>
           </div>
         </div>
 
-        ${gameState.savedGames.length > 0 ? `
-        <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 40px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 40px;">
-          <h2 style="font-size: 28px; font-weight: bold; color: white; margin-bottom: 20px;">💾 Partidas Guardadas</h2>
-          <div style="display: grid; gap: 15px;">
-            ${gameState.savedGames.map(game => `
-              <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 15px; display: flex; justify-content: space-between; align-items: center;">
-                <div style="color: white;">
-                  <div style="font-weight: bold; font-size: 18px;">${game.difficulty.toUpperCase()}</div>
-                  <div style="font-size: 14px; opacity: 0.8;">${game.date} • ${formatTime(game.timer)} • ${game.mistakes} errores</div>
+        <!-- Leaderboard -->
+        ${gameState.leaderboard.length > 0 ? `
+        <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 30px;">
+          <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">🏆 Top 10 Mejores Tiempos</h2>
+          <div style="display: grid; gap: 10px;">
+            ${gameState.leaderboard.map((entry, idx) => `
+              <div style="background: rgba(255,255,255,0.05); padding: 15px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                  <div style="font-size: 24px; font-weight: bold; color: ${idx < 3 ? '#fbbf24' : 'rgba(255,255,255,0.6)'};">
+                    ${idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`}
+                  </div>
+                  <div style="color: white;">
+                    <div style="font-weight: bold; font-size: 16px;">${entry.difficulty.toUpperCase()}</div>
+                    <div style="font-size: 13px; opacity: 0.8;">${entry.date}</div>
+                  </div>
                 </div>
-                <button onclick="loadGame(${game.id})" style="
-                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                  color: white;
-                  padding: 12px 24px;
-                  border: none;
-                  border-radius: 10px;
-                  font-weight: bold;
-                  cursor: pointer;
-                ">Cargar</button>
+                <div style="text-align: right; color: white;">
+                  <div style="font-size: 20px; font-weight: bold;">${formatTime(entry.time)}</div>
+                  <div style="font-size: 12px; opacity: 0.8;">${entry.mistakes} errores • ${entry.hintsUsed} pistas</div>
+                </div>
               </div>
             `).join('')}
           </div>
         </div>
         ` : ''}
 
-        <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 40px; border: 1px solid rgba(255,255,255,0.2);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h2 style="font-size: 28px; font-weight: bold; color: white; margin: 0;">⚙️ Configuración</h2>
-            <div style="display: flex; gap: 15px;">
+        <!-- Partidas Guardadas y Gráfico -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px;">
+          ${gameState.savedGames.length > 0 ? `
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">💾 Partidas Guardadas</h2>
+            <div style="display: grid; gap: 12px;">
+              ${gameState.savedGames.map(game => `
+                <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center;">
+                  <div style="color: white;">
+                    <div style="font-weight: bold; font-size: 15px;">${game.difficulty.toUpperCase()} ${game.expertMode ? '💪' : ''} ${game.timeAttackMode ? '⏱️' : ''}</div>
+                    <div style="font-size: 12px; opacity: 0.8;">${game.date.split(',')[0]} • ${formatTime(game.timer)}</div>
+                  </div>
+                  <button onclick="loadGame(${game.id})" style="
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 10px 20px;
+                    border: none;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    font-size: 13px;
+                    cursor: pointer;
+                  ">Cargar</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : '<div></div>'}
+
+          <!-- Gráfico de Progreso -->
+          ${gameState.progressData.dates.length > 0 ? `
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">📈 Progreso (Últimos ${gameState.progressData.dates.length} juegos)</h2>
+            <div style="color: white;">
+              <div style="margin-bottom: 20px;">
+                <div style="font-size: 14px; opacity: 0.8; margin-bottom: 5px;">Tiempo promedio</div>
+                <div style="font-size: 32px; font-weight: bold;">
+                  ${formatTime(Math.floor(gameState.progressData.times.reduce((a,b) => a+b, 0) / gameState.progressData.times.length))}
+                </div>
+              </div>
+              <div style="margin-bottom: 20px;">
+                <div style="font-size: 14px; opacity: 0.8; margin-bottom: 5px;">Precisión promedio</div>
+                <div style="font-size: 32px; font-weight: bold;">
+                  ${Math.round(gameState.progressData.accuracies.reduce((a,b) => a+b, 0) / gameState.progressData.accuracies.length)}%
+                </div>
+              </div>
+              <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px;">
+                <div style="font-size: 13px; opacity: 0.8; margin-bottom: 10px;">Evolución de tiempos</div>
+                <div style="display: flex; align-items: flex-end; gap: 3px; height: 80px;">
+                  ${gameState.progressData.times.slice(-10).map(time => {
+                    const maxTime = Math.max(...gameState.progressData.times.slice(-10));
+                    const height = (time / maxTime) * 100;
+                    return `<div style="flex: 1; background: linear-gradient(to top, #10b981, #059669); border-radius: 3px 3px 0 0; height: ${height}%;" title="${formatTime(time)}"></div>`;
+                  }).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+          ` : '<div></div>'}
+        </div>
+
+        <!-- Configuración y Personalización -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px;">
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">⚙️ Configuración</h2>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
               <button onclick="toggleTheme()" style="
                 background: rgba(255,255,255,0.2);
                 color: white;
-                padding: 12px 24px;
+                padding: 12px 20px;
                 border: none;
                 border-radius: 10px;
                 font-weight: bold;
                 cursor: pointer;
-              ">🎨 Tema: ${gameState.theme}</button>
+                width: 100%;
+                text-align: left;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              ">
+                <span>🎨 Tema</span>
+                <span style="opacity: 0.8;">${gameState.theme}</span>
+              </button>
               <button onclick="gameState.sound.toggle(); renderMenu();" style="
                 background: rgba(255,255,255,0.2);
                 color: white;
-                padding: 12px 24px;
+                padding: 12px 20px;
                 border: none;
                 border-radius: 10px;
                 font-weight: bold;
                 cursor: pointer;
-              ">${gameState.sound.enabled ? '🔊' : '🔇'} Sonido</button>
+                width: 100%;
+                text-align: left;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              ">
+                <span>${gameState.sound.enabled ? '🔊' : '🔇'} Sonido</span>
+                <span style="opacity: 0.8;">${gameState.sound.enabled ? 'Activado' : 'Desactivado'}</span>
+              </button>
+              <button onclick="gameState.autoCheck = !gameState.autoCheck; localStorage.setItem('sudoku-autocheck', JSON.stringify(gameState.autoCheck)); renderMenu();" style="
+                background: rgba(255,255,255,0.2);
+                color: white;
+                padding: 12px 20px;
+                border: none;
+                border-radius: 10px;
+                font-weight: bold;
+                cursor: pointer;
+                width: 100%;
+                text-align: left;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              ">
+                <span>🔍 Auto-verificar</span>
+                <span style="opacity: 0.8;">${gameState.autoCheck ? 'Activado' : 'Desactivado'}</span>
+              </button>
             </div>
           </div>
-          <div style="color: white; font-size: 16px; line-height: 1.8;">
-            <strong>⌨️ Atajos de teclado:</strong><br>
-            • 1-9: Ingresar números<br>
-            • Flechas: Navegar por el tablero<br>
-            • Backspace/Delete: Borrar<br>
-            • Ctrl+Z: Deshacer<br>
-            • Ctrl+S: Guardar partida<br>
-            • H: Pista
+
+          <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="font-size: 24px; font-weight: bold; color: white; margin-bottom: 20px;">⌨️ Atajos de Teclado</h2>
+            <div style="color: white; font-size: 14px; line-height: 2;">
+              <div><strong>1-9:</strong> Ingresar números</div>
+              <div><strong>Flechas:</strong> Navegar</div>
+              <div><strong>Delete/Backspace:</strong> Borrar</div>
+              <div><strong>N:</strong> Modo notas</div>
+              <div><strong>H:</strong> Pista</div>
+              <div><strong>Ctrl+Z:</strong> Deshacer</div>
+              <div><strong>Ctrl+S:</strong> Guardar</div>
+            </div>
           </div>
         </div>
       </div>
@@ -601,103 +989,154 @@ function renderMenu() {
 
 function renderGame() {
   const theme = themes[gameState.theme];
+  const conflicts = gameState.autoCheck ? findConflicts() : [];
+  const timeLeft = gameState.timeAttackMode ? gameState.timeAttackLimit - gameState.timer : 0;
+  const timeWarning = gameState.timeAttackMode && timeLeft < 60;
+  
   const root = document.getElementById('root');
   root.innerHTML = `
-    <div style="min-height: 100vh; background: ${theme.bg}; padding: 40px;">
-      <div style="max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 1fr 350px; gap: 40px;">
-        <div>
-          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 30px; padding: 40px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 30px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px;">
-              <div style="display: flex; align-items: center; gap: 20px;">
-                <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); border: none; padding: 15px 20px; border-radius: 15px; cursor: pointer; font-size: 24px;">🏠</button>
-                <div style="color: ${theme.text};">
-                  <div style="font-size: 28px; font-weight: bold; text-transform: uppercase;">${gameState.difficulty}</div>
-                  <div style="font-size: 14px; opacity: 0.8;">${gameState.currentPuzzle.clues} pistas iniciales</div>
+    <div style="min-height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
+      <div style="max-width: 1400px; margin: 0 auto;">
+        <div style="display: grid; grid-template-columns: 1fr 320px; gap: 20px;">
+          <!-- Columna izquierda: Tablero y controles -->
+          <div style="display: flex; flex-direction: column; gap: 20px;">
+            <!-- Tablero -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 18px;">🏠</button>
+                  <div style="color: ${theme.text};">
+                    <div style="font-size: 20px; font-weight: bold; text-transform: uppercase;">
+                      ${gameState.difficulty} 
+                      ${gameState.expertMode ? '💪' : ''} 
+                      ${gameState.timeAttackMode ? '⏱️' : ''}
+                    </div>
+                    <div style="font-size: 12px; opacity: 0.8;">${gameState.currentPuzzle.clues} pistas • ${gameState.moveHistory.length} movimientos</div>
+                  </div>
+                </div>
+                <div style="text-align: right; color: ${theme.text};">
+                  <div id="timer" style="font-size: 36px; font-weight: bold; ${timeWarning ? 'color: #ef4444; animation: pulse 1s infinite;' : ''}">${gameState.timeAttackMode ? formatTime(timeLeft) : formatTime(gameState.timer)}</div>
+                  <div id="mistakes" style="font-size: 12px; opacity: 0.8;">Errores: ${gameState.mistakes}</div>
                 </div>
               </div>
-              <div style="text-align: right; color: ${theme.text};">
-                <div id="timer" style="font-size: 48px; font-weight: bold;">${formatTime(gameState.timer)}</div>
-                <div id="mistakes" style="font-size: 14px; opacity: 0.8;">Errores: ${gameState.mistakes}</div>
+              <div style="display: flex; justify-content: center;">
+                <div id="board"></div>
               </div>
             </div>
-            <div style="display: flex; justify-content: center;">
-              <div id="board"></div>
+
+            <!-- Controles -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px;">
+                ${!gameState.expertMode ? `
+                <button onclick="undoMove()" style="background: rgba(249,115,22,0.8); color: white; padding: 10px; border: none; border-radius: 10px; font-size: 13px; font-weight: bold; cursor: pointer;">↶ Deshacer</button>
+                <button onclick="getHint()" style="background: rgba(234,179,8,0.8); color: white; padding: 10px; border: none; border-radius: 10px; font-size: 13px; font-weight: bold; cursor: pointer;">💡 Pista (<span id="hints">${gameState.hintsUsed}</span>)</button>
+                ` : '<div></div><div></div>'}
+                <button onclick="saveGame()" style="background: rgba(16,185,129,0.8); color: white; padding: 10px; border: none; border-radius: 10px; font-size: 13px; font-weight: bold; cursor: pointer;">💾 Guardar</button>
+              </div>
+              <div style="margin-bottom: 15px;">
+                <button onclick="toggleNotesMode()" style="
+                  background: ${gameState.notesMode ? 'rgba(139,92,246,0.8)' : 'rgba(255,255,255,0.2)'};
+                  color: white;
+                  padding: 10px;
+                  border: none;
+                  border-radius: 10px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  width: 100%;
+                ">📝 Modo Notas: ${gameState.notesMode ? 'ON' : 'OFF'} [N]</button>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;">
+                ${[1,2,3,4,5,6,7,8,9].map(num => `
+                  <button onclick="inputNumber(${num})" style="
+                    background: rgba(102, 126, 234, 0.8); 
+                    color: white; 
+                    padding: 16px; 
+                    border: none; 
+                    border-radius: 10px; 
+                    font-size: 20px; 
+                    font-weight: bold; 
+                    cursor: pointer; 
+                    transition: transform 0.1s;
+                  " onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'">${num}</button>
+                `).join('')}
+                <button onclick="inputNumber(0)" style="background: rgba(239,68,68,0.8); color: white; padding: 16px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer;">✕</button>
+              </div>
             </div>
           </div>
 
-          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 30px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px;">
-              <button onclick="undoMove()" style="background: rgba(249,115,22,0.8); color: white; padding: 15px; border: none; border-radius: 15px; font-size: 16px; font-weight: bold; cursor: pointer;">↶ Deshacer (Ctrl+Z)</button>
-              <button onclick="getHint()" style="background: rgba(234,179,8,0.8); color: white; padding: 15px; border: none; border-radius: 15px; font-size: 16px; font-weight: bold; cursor: pointer;">💡 Pista (<span id="hints">${gameState.hintsUsed}</span>) [H]</button>
-              <button onclick="saveGame()" style="background: rgba(16,185,129,0.8); color: white; padding: 15px; border: none; border-radius: 15px; font-size: 16px; font-weight: bold; cursor: pointer;">💾 Guardar (Ctrl+S)</button>
+          <!-- Columna derecha: Información -->
+          <div style="display: flex; flex-direction: column; gap: 20px;">
+            <!-- Progreso -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">📊 Progreso</h3>
+              <div style="background: rgba(102, 126, 234, 0.1); padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 10px;">
+                <div style="color: ${theme.text}; font-size: 12px; margin-bottom: 4px;">Racha actual</div>
+                <div style="font-size: 28px; font-weight: bold; color: ${theme.text};">${gameState.stats.streak} 🔥</div>
+              </div>
+              <div style="background: rgba(16, 185, 129, 0.1); padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 10px;">
+                <div style="color: ${theme.text}; font-size: 12px; margin-bottom: 4px;">Completado</div>
+                <div style="font-size: 28px; font-weight: bold; color: ${theme.text};">
+                  ${Math.round((gameState.userBoard.flat().filter(c => c !== 0).length / 81) * 100)}%
+                </div>
+              </div>
+              ${conflicts.length > 0 ? `
+              <div style="background: rgba(239, 68, 68, 0.1); padding: 15px; border-radius: 10px; text-align: center;">
+                <div style="color: #ef4444; font-size: 12px; margin-bottom: 4px;">⚠️ Conflictos</div>
+                <div style="font-size: 28px; font-weight: bold; color: #ef4444;">${conflicts.length}</div>
+              </div>
+              ` : ''}
             </div>
-            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;">
-              ${[1,2,3,4,5,6,7,8,9].map(num => `
-                <button onclick="inputNumber(${num})" style="background: rgba(102, 126, 234, 0.8); color: white; padding: 20px; border: none; border-radius: 15px; font-size: 24px; font-weight: bold; cursor: pointer; transition: transform 0.1s;" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'">${num}</button>
-              `).join('')}
-              <button onclick="inputNumber(0)" style="background: rgba(239,68,68,0.8); color: white; padding: 20px; border: none; border-radius: 15px; font-size: 20px; font-weight: bold; cursor: pointer;">✕</button>
+            
+            <!-- Opciones -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">⚙️ Opciones</h3>
+              <button onclick="toggleTheme()" style="
+                background: rgba(102, 126, 234, 0.2);
+                color: ${theme.text};
+                padding: 10px 14px;
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 12px;
+                cursor: pointer;
+                width: 100%;
+                margin-bottom: 8px;
+              ">🎨 Cambiar tema</button>
+              <button onclick="gameState.sound.toggle(); renderGame();" style="
+                background: rgba(102, 126, 234, 0.2);
+                color: ${theme.text};
+                padding: 10px 14px;
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 12px;
+                cursor: pointer;
+                width: 100%;
+              ">${gameState.sound.enabled ? '🔊' : '🔇'} ${gameState.sound.enabled ? 'Silenciar' : 'Activar'}</button>
             </div>
-          </div>
-        </div>
 
-        <div>
-          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 30px; padding: 30px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 20px;">
-            <h3 style="font-size: 20px; font-weight: bold; color: ${theme.text}; margin-bottom: 20px;">📊 Progreso</h3>
-            <div style="background: rgba(102, 126, 234, 0.1); padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 15px;">
-              <div style="color: ${theme.text}; font-size: 14px; margin-bottom: 5px;">Racha actual</div>
-              <div style="font-size: 40px; font-weight: bold; color: ${theme.text};">${gameState.stats.streak} 🔥</div>
-            </div>
-            <div style="background: rgba(16, 185, 129, 0.1); padding: 20px; border-radius: 15px; text-align: center;">
-              <div style="color: ${theme.text}; font-size: 14px; margin-bottom: 5px;">Movimientos</div>
-              <div style="font-size: 32px; font-weight: bold; color: ${theme.text};">${gameState.moveHistory.length}</div>
-            </div>
-          </div>
-          
-          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 30px; padding: 30px; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 20px;">
-            <h3 style="font-size: 20px; font-weight: bold; color: ${theme.text}; margin-bottom: 20px;">⚙️ Opciones</h3>
-            <button onclick="toggleTheme()" style="
-              background: rgba(102, 126, 234, 0.2);
-              color: ${theme.text};
-              padding: 12px 20px;
-              border: none;
-              border-radius: 10px;
-              font-weight: bold;
-              cursor: pointer;
-              width: 100%;
-              margin-bottom: 10px;
-            ">🎨 Cambiar tema</button>
-            <button onclick="gameState.sound.toggle(); renderGame();" style="
-              background: rgba(102, 126, 234, 0.2);
-              color: ${theme.text};
-              padding: 12px 20px;
-              border: none;
-              border-radius: 10px;
-              font-weight: bold;
-              cursor: pointer;
-              width: 100%;
-            ">${gameState.sound.enabled ? '🔊' : '🔇'} ${gameState.sound.enabled ? 'Silenciar' : 'Activar sonido'}</button>
-          </div>
-
-          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 30px; padding: 30px; border: 1px solid rgba(255,255,255,0.2);">
-            <h3 style="font-size: 20px; font-weight: bold; color: ${theme.text}; margin-bottom: 20px;">🎯 Técnicas básicas</h3>
-            <div style="color: ${theme.text}; font-size: 14px; line-height: 1.8; opacity: 0.9;">
-              <p style="margin: 0 0 12px 0;"><strong>Naked Single:</strong> Si una celda solo puede tener un número, ponlo.</p>
-              <p style="margin: 0 0 12px 0;"><strong>Hidden Single:</strong> Si un número solo puede ir en una celda de su fila/columna/cuadro, ponlo.</p>
-              <p style="margin: 0;"><strong>Eliminación:</strong> Descarta números que ya están en la misma fila, columna o cuadro.</p>
+            <!-- Técnicas -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">🎯 Técnicas</h3>
+              <div style="color: ${theme.text}; font-size: 12px; line-height: 1.5; opacity: 0.9;">
+                <p style="margin: 0 0 8px 0;"><strong>Naked Single:</strong> Una celda con un solo candidato.</p>
+                <p style="margin: 0 0 8px 0;"><strong>Hidden Single:</strong> Número que solo cabe en una celda.</p>
+                <p style="margin: 0;"><strong>Eliminación:</strong> Descarta por fila, columna y cuadro.</p>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
   `;
-  renderBoard();
+  renderBoard(conflicts);
 }
 
-function renderBoard() {
+function renderBoard(conflicts = []) {
   const boardEl = document.getElementById('board');
   if (!boardEl) return;
   
-  const theme = themes[gameState.theme];
   let html = '<div style="display: inline-block; background: #1f2937; padding: 4px; border-radius: 15px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">';
   
   for (let i = 0; i < 9; i++) {
@@ -707,11 +1146,18 @@ function renderBoard() {
       const isSelected = gameState.selectedCell && gameState.selectedCell[0] === i && gameState.selectedCell[1] === j;
       const userValue = gameState.userBoard[i][j];
       const displayValue = isGiven ? gameState.currentPuzzle.puzzle[i][j] : userValue;
+      const key = `${i}-${j}`;
+      const notes = gameState.notes[key];
+      const hasConflict = conflicts.some(c => c[0] === i && c[1] === j);
       
       const isError = !isGiven && userValue !== 0 && userValue !== gameState.currentPuzzle.solution[i][j];
       
-      let bgColor = isSelected ? '#93c5fd' : (isGiven ? '#f3f4f6' : (isError ? '#fecaca' : 'white'));
-      let textColor = isGiven ? '#1f2937' : (isError ? '#dc2626' : '#2563eb');
+      let bgColor = gameState.customColors.user;
+      if (isSelected) bgColor = gameState.customColors.selected;
+      else if (isGiven) bgColor = gameState.customColors.given;
+      else if (isError || hasConflict) bgColor = gameState.customColors.error;
+      
+      let textColor = isGiven ? '#1f2937' : ((isError || hasConflict) ? '#dc2626' : '#2563eb');
       let borderRight = (j % 3 === 2 && j !== 8) ? '3px solid #1f2937' : '1px solid #d1d5db';
       let borderBottom = (i % 3 === 2 && i !== 8) ? '3px solid #1f2937' : '1px solid #d1d5db';
       
@@ -722,7 +1168,7 @@ function renderBoard() {
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 24px;
+          font-size: ${notes && notes.size > 0 && !displayValue ? '11px' : '24px'};
           font-weight: bold;
           background: ${bgColor};
           color: ${textColor};
@@ -731,7 +1177,14 @@ function renderBoard() {
           cursor: ${isGiven ? 'default' : 'pointer'};
           transition: all 0.15s;
           ${isSelected ? 'box-shadow: inset 0 0 0 3px #3b82f6;' : ''}
-        ">${displayValue || ''}</div>
+          position: relative;
+        ">
+          ${displayValue ? displayValue : (notes && notes.size > 0 ? 
+            `<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; font-size: 10px; color: #6b7280;">
+              ${[1,2,3,4,5,6,7,8,9].map(n => notes.has(n) ? n : '&nbsp;').join('')}
+            </div>` 
+            : '')}
+        </div>
       `;
     }
     html += '</div>';
