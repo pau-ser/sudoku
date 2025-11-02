@@ -737,10 +737,19 @@ async function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack =
 }
 
 function selectCell(row, col) {
+  // Solo actualizar si realmente cambió la selección
+  if (gameState.selectedCell && 
+      gameState.selectedCell[0] === row && 
+      gameState.selectedCell[1] === col) {
+    return; // Ya está seleccionada, no hacer nada
+  }
+
+  const previousSelected = gameState.selectedCell;
   gameState.selectedCell = [row, col];
   gameState.sound.click();
   
-  renderBoard();
+  // Actualizar solo las celdas afectadas por el cambio de selección
+  updateSelectedCells(previousSelected, [row, col]);
 }
 
 async function inputNumber(num) {
@@ -790,7 +799,7 @@ async function inputNumber(num) {
       }
       
       gameState.sound.note();
-      renderBoard();
+      updateCellAndRelated(row, col);
       
     } else {
       // Modo normal - entrada de número
@@ -868,7 +877,7 @@ async function inputNumber(num) {
         checkWin();
       }
       
-      renderBoard();
+      updateCellAndRelated(row, col);
       updateMistakes();
     }
     
@@ -1943,11 +1952,21 @@ function renderBoard(conflicts = []) {
   const boardEl = document.getElementById('board');
   if (!boardEl || !gameState.currentPuzzle) return;
 
+  // Solo renderizar completamente si no existe el tablero
+  const existingBoard = boardEl.querySelector('[data-board]');
+  if (!existingBoard) {
+    renderFullBoard(conflicts);
+  } else {
+    updateBoard(conflicts);
+  }
+}
+
+function renderFullBoard(conflicts = []) {
+  const boardEl = document.getElementById('board');
   const cellSize = getCellSize();
   const fontSize = getFontSize(20);
   const noteFontSize = getFontSize(10);
   
-  // Obtener información de la celda seleccionada
   let selectedValue = null;
   let selectedRow = null;
   let selectedCol = null;
@@ -1955,116 +1974,294 @@ function renderBoard(conflicts = []) {
   if (gameState.selectedCell) {
     selectedRow = gameState.selectedCell[0];
     selectedCol = gameState.selectedCell[1];
-    // Obtener el valor de la celda seleccionada (puede ser fija o del usuario)
     selectedValue = gameState.currentPuzzle.puzzle[selectedRow][selectedCol] !== 0 
       ? gameState.currentPuzzle.puzzle[selectedRow][selectedCol] 
       : gameState.userBoard[selectedRow][selectedCol];
   }
   
-  let html = '<div style="display: inline-block; background: #374151; padding: 4px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">';
+  let html = '<div data-board style="display: inline-block; background: #374151; padding: 4px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">';
   
   for (let i = 0; i < 9; i++) {
     html += '<div style="display: flex;">';
     for (let j = 0; j < 9; j++) {
-      const isGiven = gameState.currentPuzzle.puzzle[i][j] !== 0;
-      const isSelected = gameState.selectedCell && gameState.selectedCell[0] === i && gameState.selectedCell[1] === j;
-      const userValue = gameState.userBoard[i][j];
-      const displayValue = isGiven ? gameState.currentPuzzle.puzzle[i][j] : userValue;
-      const key = `${i}-${j}`;
-      const notes = gameState.notes[key];
-      const hasConflict = conflicts.some(c => c[0] === i && c[1] === j);
-      
-      const isError = !isGiven && userValue !== 0 && gameState.currentPuzzle.solution && 
-                     userValue !== gameState.currentPuzzle.solution[i][j];
-      
-      // Determinar colores base
-      let bgColor, textColor;
-      
-      if (isSelected) {
-        bgColor = '#3b82f6'; // Azul intenso para celda seleccionada
-        textColor = 'white';
-      } else if (isGiven) {
-        bgColor = '#f3f4f6'; // Gris claro para celdas fijas
-        textColor = '#1f2937';
-      } else if (isError || hasConflict) {
-        bgColor = '#fecaca'; // Rojo claro para errores
-        textColor = '#dc2626';
-      } else {
-        bgColor = '#ffffff'; // Blanco para celdas editables
-        textColor = '#2563eb';
-      }
-      
-      // SISTEMA DE RESALTADOS MEJORADO
-      if (selectedValue !== null && selectedValue !== 0 && !isSelected) {
-        const sameRow = i === selectedRow;
-        const sameCol = j === selectedCol;
-        const sameBox = Math.floor(i / 3) === Math.floor(selectedRow / 3) && 
-                       Math.floor(j / 3) === Math.floor(selectedCol / 3);
-        const sameNumber = displayValue === selectedValue;
-        
-        if (sameNumber) {
-          // RESALTAR NÚMEROS IGUALES - Color más intenso
-          bgColor = '#60a5fa'; // Azul medio para números iguales
-          textColor = 'white';
-        } else if (sameRow || sameCol) {
-          // RESALTAR FILA Y COLUMNA - Color suave
-          bgColor = '#dbeafe'; // Azul muy claro para fila/columna
-          if (isGiven) {
-            textColor = '#1e40af'; // Texto más oscuro para celdas fijas
-          }
-        } else if (sameBox) {
-          // RESALTAR CUADRO 3x3 - Color muy suave
-          bgColor = '#eff6ff'; // Azul casi blanco para el cuadro
-        }
-      }
-      
-      // Bordes para los cuadros 3x3
-      const borderRight = (j % 3 === 2 && j !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
-      const borderBottom = (i % 3 === 2 && i !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
-      
-      // Contenido de la celda
-      let cellContent = '';
-      if (displayValue !== 0) {
-        cellContent = `<div style="font-size: ${fontSize}px; font-weight: bold;">${displayValue}</div>`;
-      } else if (notes && notes.size > 0) {
-        const notesArray = Array.from(notes).sort();
-        cellContent = `
-          <div style="display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 100%; padding: 2px; gap: 1px;">
-            ${[1,2,3,4,5,6,7,8,9].map(n => 
-              `<div style="display: flex; align-items: center; justify-content: center; font-size: ${noteFontSize}px; color: #6b7280; font-weight: normal;">
-                ${notesArray.includes(n) ? n : ''}
-              </div>`
-            ).join('')}
-          </div>
-        `;
-      }
-      
-      html += `
-        <div onclick="selectCell(${i}, ${j})" style="
-          width: ${cellSize}px;
-          height: ${cellSize}px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: ${bgColor};
-          color: ${textColor};
-          border-right: ${borderRight};
-          border-bottom: ${borderBottom};
-          cursor: pointer;
-          transition: all 0.15s;
-          user-select: none;
-          ${isSelected ? 'box-shadow: inset 0 0 0 2px #1d4ed8; z-index: 1;' : ''}
-          position: relative;
-          font-family: Arial, sans-serif;
-        ">
-          ${cellContent}
-        </div>
-      `;
+      html += createCellHTML(i, j, selectedValue, selectedRow, selectedCol, conflicts, 
+                            cellSize, fontSize, noteFontSize);
     }
     html += '</div>';
   }
   html += '</div>';
   boardEl.innerHTML = html;
+}
+
+function updateBoard(conflicts = []) {
+  const boardEl = document.getElementById('board');
+  if (!boardEl) return;
+
+  const cellSize = getCellSize();
+  const fontSize = getFontSize(20);
+  const noteFontSize = getFontSize(10);
+  
+  let selectedValue = null;
+  let selectedRow = null;
+  let selectedCol = null;
+  
+  if (gameState.selectedCell) {
+    selectedRow = gameState.selectedCell[0];
+    selectedCol = gameState.selectedCell[1];
+    selectedValue = gameState.currentPuzzle.puzzle[selectedRow][selectedCol] !== 0 
+      ? gameState.currentPuzzle.puzzle[selectedRow][selectedCol] 
+      : gameState.userBoard[selectedRow][selectedCol];
+  }
+
+  // Actualizar solo las celdas que necesitan cambio
+  for (let i = 0; i < 9; i++) {
+    for (let j = 0; j < 9; j++) {
+      const cellEl = boardEl.querySelector(`[data-cell="${i}-${j}"]`);
+      if (cellEl) {
+        updateSingleCell(cellEl, i, j, selectedValue, selectedRow, selectedCol, conflicts,
+                        cellSize, fontSize, noteFontSize);
+      }
+    }
+  }
+}
+
+// Función auxiliar para crear el HTML de una celda individual
+function createCellHTML(i, j, selectedValue, selectedRow, selectedCol, conflicts, 
+                       cellSize, fontSize, noteFontSize) {
+  const isGiven = gameState.currentPuzzle.puzzle[i][j] !== 0;
+  const isSelected = selectedRow === i && selectedCol === j;
+  const userValue = gameState.userBoard[i][j];
+  const displayValue = isGiven ? gameState.currentPuzzle.puzzle[i][j] : userValue;
+  const key = `${i}-${j}`;
+  const notes = gameState.notes[key];
+  const hasConflict = conflicts.some(c => c[0] === i && c[1] === j);
+  
+  const isError = !isGiven && userValue !== 0 && gameState.currentPuzzle.solution && 
+                 userValue !== gameState.currentPuzzle.solution[i][j];
+  
+  // Determinar colores base
+  let bgColor, textColor;
+  
+  if (isSelected) {
+    bgColor = '#3b82f6';
+    textColor = 'white';
+  } else if (isGiven) {
+    bgColor = '#f3f4f6';
+    textColor = '#1f2937';
+  } else if (isError || hasConflict) {
+    bgColor = '#fecaca';
+    textColor = '#dc2626';
+  } else {
+    bgColor = '#ffffff';
+    textColor = '#2563eb';
+  }
+  
+  // Sistema de resaltados
+  if (selectedValue !== null && selectedValue !== 0 && !isSelected) {
+    const sameRow = i === selectedRow;
+    const sameCol = j === selectedCol;
+    const sameBox = Math.floor(i / 3) === Math.floor(selectedRow / 3) && 
+                   Math.floor(j / 3) === Math.floor(selectedCol / 3);
+    const sameNumber = displayValue === selectedValue;
+    
+    if (sameNumber) {
+      bgColor = '#60a5fa';
+      textColor = 'white';
+    } else if (sameRow || sameCol) {
+      bgColor = '#dbeafe';
+      if (isGiven) {
+        textColor = '#1e40af';
+      }
+    } else if (sameBox) {
+      bgColor = '#eff6ff';
+    }
+  }
+  
+  // Bordes para los cuadros 3x3
+  const borderRight = (j % 3 === 2 && j !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
+  const borderBottom = (i % 3 === 2 && i !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
+  
+  // Contenido de la celda
+  let cellContent = '';
+  if (displayValue !== 0) {
+    cellContent = `<div style="font-size: ${fontSize}px; font-weight: bold;">${displayValue}</div>`;
+  } else if (notes && notes.size > 0) {
+    const notesArray = Array.from(notes).sort();
+    cellContent = `
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 100%; padding: 2px; gap: 1px;">
+        ${[1,2,3,4,5,6,7,8,9].map(n => 
+          `<div style="display: flex; align-items: center; justify-content: center; font-size: ${noteFontSize}px; color: #6b7280; font-weight: normal;">
+            ${notesArray.includes(n) ? n : ''}
+          </div>`
+        ).join('')}
+      </div>
+    `;
+  }
+  
+  return `
+    <div data-cell="${i}-${j}" onclick="selectCell(${i}, ${j})" style="
+      width: ${cellSize}px;
+      height: ${cellSize}px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: ${bgColor};
+      color: ${textColor};
+      border-right: ${borderRight};
+      border-bottom: ${borderBottom};
+      cursor: pointer;
+      transition: all 0.15s;
+      user-select: none;
+      ${isSelected ? 'box-shadow: inset 0 0 0 2px #1d4ed8; z-index: 1;' : ''}
+      position: relative;
+      font-family: Arial, sans-serif;
+    ">
+      ${cellContent}
+    </div>
+  `;
+}
+
+// Función para actualizar una sola celda sin re-renderizar todo
+function updateSingleCell(cellEl, i, j, selectedValue, selectedRow, selectedCol, conflicts, 
+                         cellSize, fontSize, noteFontSize) {
+  const isGiven = gameState.currentPuzzle.puzzle[i][j] !== 0;
+  const isSelected = selectedRow === i && selectedCol === j;
+  const userValue = gameState.userBoard[i][j];
+  const displayValue = isGiven ? gameState.currentPuzzle.puzzle[i][j] : userValue;
+  const key = `${i}-${j}`;
+  const notes = gameState.notes[key];
+  const hasConflict = conflicts.some(c => c[0] === i && c[1] === j);
+  
+  const isError = !isGiven && userValue !== 0 && gameState.currentPuzzle.solution && 
+                 userValue !== gameState.currentPuzzle.solution[i][j];
+  
+  // Determinar colores base
+  let bgColor, textColor;
+  
+  if (isSelected) {
+    bgColor = '#3b82f6';
+    textColor = 'white';
+  } else if (isGiven) {
+    bgColor = '#f3f4f6';
+    textColor = '#1f2937';
+  } else if (isError || hasConflict) {
+    bgColor = '#fecaca';
+    textColor = '#dc2626';
+  } else {
+    bgColor = '#ffffff';
+    textColor = '#2563eb';
+  }
+  
+  // Sistema de resaltados
+  if (selectedValue !== null && selectedValue !== 0 && !isSelected) {
+    const sameRow = i === selectedRow;
+    const sameCol = j === selectedCol;
+    const sameBox = Math.floor(i / 3) === Math.floor(selectedRow / 3) && 
+                   Math.floor(j / 3) === Math.floor(selectedCol / 3);
+    const sameNumber = displayValue === selectedValue;
+    
+    if (sameNumber) {
+      bgColor = '#60a5fa';
+      textColor = 'white';
+    } else if (sameRow || sameCol) {
+      bgColor = '#dbeafe';
+      if (isGiven) {
+        textColor = '#1e40af';
+      }
+    } else if (sameBox) {
+      bgColor = '#eff6ff';
+    }
+  }
+  
+  // Actualizar estilos
+  cellEl.style.background = bgColor;
+  cellEl.style.color = textColor;
+  cellEl.style.boxShadow = isSelected ? 'inset 0 0 0 2px #1d4ed8' : 'none';
+  cellEl.style.zIndex = isSelected ? '1' : 'auto';
+  
+  // Actualizar contenido
+  if (displayValue !== 0) {
+    cellEl.innerHTML = `<div style="font-size: ${fontSize}px; font-weight: bold;">${displayValue}</div>`;
+  } else if (notes && notes.size > 0) {
+    const notesArray = Array.from(notes).sort();
+    cellEl.innerHTML = `
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 100%; padding: 2px; gap: 1px;">
+        ${[1,2,3,4,5,6,7,8,9].map(n => 
+          `<div style="display: flex; align-items: center; justify-content: center; font-size: ${noteFontSize}px; color: #6b7280; font-weight: normal;">
+            ${notesArray.includes(n) ? n : ''}
+          </div>`
+        ).join('')}
+      </div>
+    `;
+  } else {
+    cellEl.innerHTML = '';
+  }
+}
+
+function updateSelectedCells(previousSelected, newSelected) {
+  const boardEl = document.getElementById('board');
+  if (!boardEl) return;
+
+  const conflicts = gameState.autoCheck ? findConflicts() : [];
+  const cellSize = getCellSize();
+  const fontSize = getFontSize(20);
+  const noteFontSize = getFontSize(10);
+  
+  let selectedValue = null;
+  if (newSelected) {
+    const [selectedRow, selectedCol] = newSelected;
+    selectedValue = gameState.currentPuzzle.puzzle[selectedRow][selectedCol] !== 0 
+      ? gameState.currentPuzzle.puzzle[selectedRow][selectedCol] 
+      : gameState.userBoard[selectedRow][selectedCol];
+  }
+
+  // Celdas que necesitan actualización
+  const cellsToUpdate = new Set();
+
+  // Añadir celdas previamente seleccionadas y sus relacionadas
+  if (previousSelected) {
+    const [prevRow, prevCol] = previousSelected;
+    cellsToUpdate.add(`${prevRow}-${prevCol}`);
+    addRelatedCells(prevRow, prevCol, cellsToUpdate);
+  }
+
+  // Añadir nuevas celdas seleccionadas y sus relacionadas
+  if (newSelected) {
+    const [newRow, newCol] = newSelected;
+    cellsToUpdate.add(`${newRow}-${newCol}`);
+    addRelatedCells(newRow, newCol, cellsToUpdate);
+  }
+
+  // Actualizar solo las celdas que cambiaron
+  cellsToUpdate.forEach(cellKey => {
+    const [i, j] = cellKey.split('-').map(Number);
+    const cellEl = boardEl.querySelector(`[data-cell="${i}-${j}"]`);
+    if (cellEl) {
+      updateSingleCell(cellEl, i, j, selectedValue, newSelected?.[0], newSelected?.[1], conflicts,
+                      cellSize, fontSize, noteFontSize);
+    }
+  });
+}
+
+function addRelatedCells(row, col, cellsSet) {
+  // Añadir fila completa
+  for (let j = 0; j < 9; j++) {
+    cellsSet.add(`${row}-${j}`);
+  }
+  
+  // Añadir columna completa
+  for (let i = 0; i < 9; i++) {
+    cellsSet.add(`${i}-${col}`);
+  }
+  
+  // Añadir cuadro 3x3
+  const boxRow = Math.floor(row / 3) * 3;
+  const boxCol = Math.floor(col / 3) * 3;
+  for (let i = boxRow; i < boxRow + 3; i++) {
+    for (let j = boxCol; j < boxCol + 3; j++) {
+      cellsSet.add(`${i}-${j}`);
+    }
+  }
 }
 
 function updateTimer() {
@@ -2243,6 +2440,48 @@ function showWinScreen() {
   document.head.appendChild(style);
 }
 
+function updateCellAndRelated(row, col) {
+  const boardEl = document.getElementById('board');
+  if (!boardEl) return;
+
+  const conflicts = gameState.autoCheck ? findConflicts() : [];
+  const cellSize = getCellSize();
+  const fontSize = getFontSize(20);
+  const noteFontSize = getFontSize(10);
+  
+  let selectedValue = null;
+  let selectedRow = null;
+  let selectedCol = null;
+  
+  if (gameState.selectedCell) {
+    selectedRow = gameState.selectedCell[0];
+    selectedCol = gameState.selectedCell[1];
+    selectedValue = gameState.currentPuzzle.puzzle[selectedRow][selectedCol] !== 0 
+      ? gameState.currentPuzzle.puzzle[selectedRow][selectedCol] 
+      : gameState.userBoard[selectedRow][selectedCol];
+  }
+
+  // Actualizar la celda modificada y todas las relacionadas
+  const cellsToUpdate = new Set();
+  cellsToUpdate.add(`${row}-${col}`);
+  addRelatedCells(row, col, cellsToUpdate);
+
+  // Si hay una celda seleccionada, también actualizar sus relacionadas
+  if (gameState.selectedCell) {
+    const [selRow, selCol] = gameState.selectedCell;
+    addRelatedCells(selRow, selCol, cellsToUpdate);
+  }
+
+  // Actualizar solo las celdas que necesitan cambio
+  cellsToUpdate.forEach(cellKey => {
+    const [i, j] = cellKey.split('-').map(Number);
+    const cellEl = boardEl.querySelector(`[data-cell="${i}-${j}"]`);
+    if (cellEl) {
+      updateSingleCell(cellEl, i, j, selectedValue, selectedRow, selectedCol, conflicts,
+                      cellSize, fontSize, noteFontSize);
+    }
+  });
+}
 
 // Inicializar la aplicación
 document.addEventListener('DOMContentLoaded', () => {
