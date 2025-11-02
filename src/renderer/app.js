@@ -944,7 +944,7 @@ function renderMenu() {
     <div style="height: 100vh; background: ${theme.menuBg}; padding: 20px; overflow-y: scroll; box-sizing: border-box; display: flex; flex-direction: column;">
       <div style="max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; overflow-y: auto;">
         <div style="text-align: right; margin-bottom: 20px;">
-          <button onclick="window.close()" style="background: rgba(239,68,68,0.8); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: bold;">✕ Cerrar</button>
+          <button onclick="window.electron.closeApp()" style="background: rgba(239,68,68,0.8); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: bold;">✕ Cerrar</button>
         </div>
         <div style="text-align: center; margin-bottom: 50px;">
           <h1 style="font-size: 64px; font-weight: bold; color: white; margin: 0 0 15px 0; letter-spacing: -2px;">SUDOKU PRO</h1>
@@ -1231,7 +1231,7 @@ function renderGame() {
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                   <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 18px;">🏠</button>
-                  <button onclick="window.close()" style="background: rgba(239,68,68,0.8); border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-size: 18px;">✕</button>
+                  <button onclick="window.electron.closeApp()" style="background: rgba(239,68,68,0.8); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: bold;">✕ Cerrar</button>
                   <div style="color: ${theme.text};">
                     <div style="font-size: 20px; font-weight: bold; text-transform: uppercase;">
                       ${gameState.difficulty} 

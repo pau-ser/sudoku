@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron'); // Añadir ipcMain
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 
 let mainWindow;
@@ -16,7 +16,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     },
     backgroundColor: '#1a1a2e',
-    icon: path.join(__dirname, '../assets/icon.png')
+    icon: path.join(__dirname, '../assets/icon.png'),
+    autoHideMenuBar: true // Ocultar barra de menú
   });
 
   mainWindow.loadFile('src/renderer/index.html');
@@ -27,10 +28,17 @@ function createWindow() {
   }
 }
 
-// AÑADIR ESTE LISTENER
+// Listener para toggle fullscreen
 ipcMain.on('toggle-fullscreen', () => {
   if (mainWindow) {
     mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  }
+});
+
+// Listener para cerrar la aplicación
+ipcMain.on('close-app', () => {
+  if (mainWindow) {
+    mainWindow.close();
   }
 });
 

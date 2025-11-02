@@ -1,45 +1,64 @@
 {
   "name": "sudoku-pro",
   "version": "1.0.0",
-  "description": "Professional Sudoku Game for Steam",
+  "description": "Sudoku Pro - Juego de lógica avanzado",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "NODE_ENV=development electron .",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux"
+    "start:dev": "cross-env NODE_ENV=development electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "author": "pauser",
+  "license": "MIT",
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
   },
   "build": {
-    "appId": "com.tuempresa.sudokupro",
+    "appId": "com.pauser.sudokupro",
     "productName": "Sudoku Pro",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "assets"
     },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
     "win": {
       "target": [
-        "nsis"
+        "nsis",
+        "portable"
       ],
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.ico"
     },
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
-      "category": "public.app-category.puzzle-games"
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.games"
     },
     "linux": {
       "target": [
         "AppImage",
         "deb"
       ],
+      "icon": "assets/icon.png",
       "category": "Game"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
-  },
-  "dependencies": {
-    "greenworks": "^0.1.0"
-  },
-  "devDependencies": {
-    "electron": "^39.0.0"
   }
 }
