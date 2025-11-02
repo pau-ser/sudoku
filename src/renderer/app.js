@@ -285,7 +285,73 @@ const gameState = {
   leaderboard: JSON.parse(localStorage.getItem('sudoku-leaderboard') || '[]'),
   progressData: JSON.parse(localStorage.getItem('sudoku-progress') || '{"dates":[],"times":[],"accuracies":[]}'),
   customColors: JSON.parse(localStorage.getItem('sudoku-colors') || '{"given":"#f3f4f6","selected":"#93c5fd","user":"#ffffff","error":"#fecaca"}'),
-  sound: new SoundSystem()
+  sound: new SoundSystem(),
+
+  advancedStats: JSON.parse(localStorage.getItem('sudoku-advanced-stats') || `{
+    "sessionHistory": [],
+    "errorHeatmap": ${JSON.stringify(Array(9).fill(0).map(() => Array(9).fill(0)))},
+    "techniqueUsage": {
+      "singleCandidate": 0,
+      "singlePosition": 0, 
+      "candidateLine": 0,
+      "doublePair": 0,
+      "multipleLines": 0,
+      "xWing": 0,
+      "swordfish": 0,
+      "hiddenPairs": 0
+    },
+    "timeDistribution": {
+      "easy": 0,
+      "medium": 0,
+      "hard": 0,
+      "expert": 0,
+      "master": 0
+    },
+    "improvementTimeline": [],
+    "personalBests": {},
+    "averageTimes": {
+      "easy": null,
+      "medium": null,
+      "hard": null,
+      "expert": null,
+      "master": null
+    },
+    "consistencyScore": 0,
+    "totalSessions": 0
+  }`),
+
+  tournamentProgress: JSON.parse(localStorage.getItem('sudoku-tournament') || `{
+    "currentLevel": 1,
+    "lives": 3,
+    "completedLevels": [],
+    "totalScore": 0,
+    "currentChapter": 1,
+    "unlockedChapters": [1]
+  }`),
+
+  battleRoyale: JSON.parse(localStorage.getItem('sudoku-battle-royale') || `{
+    "gamesPlayed": 0,
+    "gamesWon": 0,
+    "bestPosition": null,
+    "averagePosition": null
+  }`),
+
+  globalRanking: JSON.parse(localStorage.getItem('sudoku-global-ranking') || `{
+    "globalRank": null,
+    "countryRank": null,
+    "friendsRank": [],
+    "rating": 1000,
+    "lastUpdated": null
+  }`),
+
+  dailyChallenges: JSON.parse(localStorage.getItem('sudoku-daily-challenges') || `{
+    "currentStreak": 0,
+    "longestStreak": 0,
+    "totalCompleted": 0,
+    "monthlyCompletions": [],
+    "bestDailyTime": null,
+    "dailyRankings": {}
+  }`)
 };
 
 // Sistema de escalado responsivo
@@ -854,6 +920,7 @@ async function inputNumber(num) {
             
             if (!isCorrect && num !== 0) {
               gameState.mistakes++;
+              recordErrorHeatmap(row, col);
               gameState.sound.error();
             } else {
               gameState.sound.input();
@@ -1750,6 +1817,23 @@ function renderMenu() {
                 <span>🔍 Auto-verificar</span>
                 <span style="opacity: 0.8;">${gameState.autoCheck ? 'Activado' : 'Desactivado'}</span>
               </button>
+              <button onclick="showAdvancedAnalytics()" style="
+                background: rgba(255,255,255,0.2);
+                color: white;
+                padding: 12px 20px;
+                border: none;
+                border-radius: 10px;
+                font-weight: bold;
+                cursor: pointer;
+                width: 100%;
+                text-align: left;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              ">
+                <span>📊 Análisis Avanzado</span>
+                <span style="opacity: 0.8;">→</span>
+              </button>
             </div>
           </div>
 
@@ -2292,6 +2376,8 @@ function updateHints() {
 }
 
 function showWinScreen() {
+  recordSessionAnalysis();
+  recordTimeDistribution(gameState.difficulty, gameState.timer);
   const theme = themes[gameState.theme];
   const root = document.getElementById('root');
   
@@ -2477,6 +2563,347 @@ function updateCellAndRelated(row, col) {
                       cellSize, fontSize, noteFontSize);
     }
   });
+}
+
+function recordSessionAnalysis() {
+  if (!gameState.currentPuzzle) return;
+  
+  const sessionData = {
+    date: new Date().toISOString(),
+    difficulty: gameState.difficulty,
+    time: gameState.timer,
+    mistakes: gameState.mistakes,
+    hintsUsed: gameState.hintsUsed,
+    completed: true,
+    puzzleId: gameState.currentGameId || `local_${Date.now()}`
+  };
+  
+  gameState.advancedStats.sessionHistory.push(sessionData);
+  
+  // Mantener solo los últimos 100 registros
+  if (gameState.advancedStats.sessionHistory.length > 100) {
+    gameState.advancedStats.sessionHistory.shift();
+  }
+  
+  updatePersonalBests();
+  updateImprovementTimeline();
+  saveAdvancedStats();
+}
+
+// Actualizar mejores marcas personales
+function updatePersonalBests() {
+  const difficulty = gameState.difficulty;
+  const time = gameState.timer;
+  const mistakes = gameState.mistakes;
+  
+  if (!gameState.advancedStats.personalBests[difficulty]) {
+    gameState.advancedStats.personalBests[difficulty] = {
+      bestTime: time,
+      bestTimeDate: new Date().toISOString(),
+      lowestMistakes: mistakes,
+      lowestMistakesDate: new Date().toISOString()
+    };
+  } else {
+    const pb = gameState.advancedStats.personalBests[difficulty];
+    
+    if (time < pb.bestTime) {
+      pb.bestTime = time;
+      pb.bestTimeDate = new Date().toISOString();
+    }
+    
+    if (mistakes < pb.lowestMistakes) {
+      pb.lowestMistakes = mistakes;
+      pb.lowestMistakesDate = new Date().toISOString();
+    }
+  }
+}
+
+// Actualizar línea de tiempo de mejora
+function updateImprovementTimeline() {
+  const last30Sessions = gameState.advancedStats.sessionHistory.slice(-30);
+  
+  if (last30Sessions.length === 0) return;
+  
+  // Agrupar por semana para ver tendencias
+  const weeklyAverages = {};
+  
+  last30Sessions.forEach(session => {
+    const date = new Date(session.date);
+    const weekKey = `${date.getFullYear()}-W${Math.floor(date.getDate() / 7)}`;
+    
+    if (!weeklyAverages[weekKey]) {
+      weeklyAverages[weekKey] = { totalTime: 0, totalSessions: 0, weekStart: date };
+    }
+    
+    weeklyAverages[weekKey].totalTime += session.time;
+    weeklyAverages[weekKey].totalSessions++;
+  });
+  
+  gameState.advancedStats.improvementTimeline = Object.entries(weeklyAverages).map(([week, data]) => ({
+    week,
+    averageTime: Math.round(data.totalTime / data.totalSessions),
+    sessions: data.totalSessions,
+    weekStart: data.weekStart
+  }));
+}
+
+// Registrar error en el heatmap
+function recordErrorHeatmap(row, col) {
+  if (row >= 0 && row < 9 && col >= 0 && col < 9) {
+    gameState.advancedStats.errorHeatmap[row][col]++;
+    saveAdvancedStats();
+  }
+}
+
+// Registrar uso de técnicas
+function recordTechniqueUsage(technique) {
+  if (gameState.advancedStats.techniqueUsage[technique] !== undefined) {
+    gameState.advancedStats.techniqueUsage[technique]++;
+    saveAdvancedStats();
+  }
+}
+
+// Registrar tiempo por dificultad
+function recordTimeDistribution(difficulty, time) {
+  if (gameState.advancedStats.timeDistribution[difficulty] !== undefined) {
+    gameState.advancedStats.timeDistribution[difficulty] += time;
+    saveAdvancedStats();
+  }
+}
+
+// Guardar estadísticas avanzadas
+function saveAdvancedStats() {
+  localStorage.setItem('sudoku-advanced-stats', JSON.stringify(gameState.advancedStats));
+}
+
+function showAdvancedAnalytics() {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto; box-sizing: border-box;">
+      <div style="max-width: 1200px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+          <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer; font-size: 16px;">← Volver</button>
+          <h1 style="color: ${theme.text}; margin: 0;">📊 Análisis Avanzado</h1>
+          <div style="width: 100px;"></div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+          <!-- Heatmap de Errores -->
+          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="color: ${theme.text}; margin-bottom: 20px;">🔥 Heatmap de Errores</h2>
+            <div style="display: flex; justify-content: center;">
+              ${renderErrorHeatmap()}
+            </div>
+            <div style="color: ${theme.text}; font-size: 14px; margin-top: 15px; text-align: center;">
+              Áreas donde cometes más errores
+            </div>
+          </div>
+
+          <!-- Mejores Marcas -->
+          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="color: ${theme.text}; margin-bottom: 20px;">🏆 Mejores Marcas</h2>
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+              ${renderPersonalBests()}
+            </div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+          <!-- Distribución de Tiempo -->
+          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="color: ${theme.text}; margin-bottom: 20px;">⏱️ Tiempo por Dificultad</h2>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              ${renderTimeDistribution()}
+            </div>
+          </div>
+
+          <!-- Técnicas Utilizadas -->
+          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+            <h2 style="color: ${theme.text}; margin-bottom: 20px;">🔧 Técnicas Utilizadas</h2>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              ${renderTechniqueUsage()}
+            </div>
+          </div>
+        </div>
+
+        <!-- Progreso Temporal -->
+        <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+          <h2 style="color: ${theme.text}; margin-bottom: 20px;">📈 Progreso en el Tiempo</h2>
+          <div style="color: ${theme.text};">
+            ${renderImprovementTimeline()}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Función para renderizar el heatmap de errores
+function renderErrorHeatmap() {
+  const maxErrors = Math.max(...gameState.advancedStats.errorHeatmap.flat());
+  const cellSize = 30;
+  
+  let html = '<div style="display: inline-block; background: #374151; padding: 10px; border-radius: 10px;">';
+  
+  for (let i = 0; i < 9; i++) {
+    html += '<div style="display: flex;">';
+    for (let j = 0; j < 9; j++) {
+      const errors = gameState.advancedStats.errorHeatmap[i][j];
+      const intensity = maxErrors > 0 ? (errors / maxErrors) : 0;
+      const color = intensity > 0.7 ? '#ef4444' : 
+                   intensity > 0.4 ? '#f97316' : 
+                   intensity > 0.1 ? '#fbbf24' : '#6b7280';
+      
+      html += `
+        <div style="
+          width: ${cellSize}px;
+          height: ${cellSize}px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: ${color};
+          color: white;
+          font-size: 10px;
+          font-weight: bold;
+          border: 1px solid #4b5563;
+        " title="Errores: ${errors}">
+          ${errors > 0 ? errors : ''}
+        </div>
+      `;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  
+  return html;
+}
+
+// Función para renderizar mejores marcas personales
+function renderPersonalBests() {
+  const pbs = gameState.advancedStats.personalBests;
+  const difficulties = ['easy', 'medium', 'hard', 'expert', 'master'];
+  
+  return difficulties.map(diff => {
+    const pb = pbs[diff];
+    if (!pb) return `
+      <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px;">
+        <div style="color: ${themes[gameState.theme].text}; font-weight: bold; text-transform: capitalize;">${diff}</div>
+        <div style="color: rgba(255,255,255,0.6); font-size: 12px;">Sin datos</div>
+      </div>
+    `;
+    
+    return `
+      <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px;">
+        <div style="color: ${themes[gameState.theme].text}; font-weight: bold; text-transform: capitalize;">${diff}</div>
+        <div style="display: flex; justify-content: space-between; margin-top: 8px;">
+          <div style="color: rgba(255,255,255,0.8); font-size: 12px;">
+            ⏱️ ${formatTime(pb.bestTime)}
+          </div>
+          <div style="color: rgba(255,255,255,0.8); font-size: 12px;">
+            ❌ ${pb.lowestMistakes}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Función para renderizar distribución de tiempo
+function renderTimeDistribution() {
+  const timeDist = gameState.advancedStats.timeDistribution;
+  const totalTime = Object.values(timeDist).reduce((a, b) => a + b, 0);
+  
+  if (totalTime === 0) {
+    return '<div style="color: rgba(255,255,255,0.6); text-align: center;">Sin datos de tiempo</div>';
+  }
+  
+  return Object.entries(timeDist).map(([diff, time]) => {
+    const percentage = totalTime > 0 ? Math.round((time / totalTime) * 100) : 0;
+    const width = Math.max(10, percentage);
+    
+    return `
+      <div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span style="color: ${themes[gameState.theme].text}; text-transform: capitalize;">${diff}</span>
+          <span style="color: rgba(255,255,255,0.8);">${formatTime(time)} (${percentage}%)</span>
+        </div>
+        <div style="background: rgba(255,255,255,0.1); height: 8px; border-radius: 4px; overflow: hidden;">
+          <div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: ${width}%; border-radius: 4px;"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Función para renderizar uso de técnicas
+function renderTechniqueUsage() {
+  const techniques = gameState.advancedStats.techniqueUsage;
+  const totalUses = Object.values(techniques).reduce((a, b) => a + b, 0);
+  
+  const techniqueNames = {
+    singleCandidate: "Candidato Único",
+    singlePosition: "Posición Única",
+    candidateLine: "Línea de Candidatos", 
+    doublePair: "Pares Dobles",
+    multipleLines: "Múltiples Líneas"
+  };
+  
+  return Object.entries(techniques).map(([tech, count]) => {
+    const percentage = totalUses > 0 ? Math.round((count / totalUses) * 100) : 0;
+    
+    return `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
+        <span style="color: ${themes[gameState.theme].text}; font-size: 14px;">${techniqueNames[tech]}</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="background: rgba(255,255,255,0.1); width: 60px; height: 6px; border-radius: 3px;">
+            <div style="background: #10b981; height: 100%; width: ${percentage}%; border-radius: 3px;"></div>
+          </div>
+          <span style="color: rgba(255,255,255,0.8); font-size: 12px; min-width: 30px;">${count}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Función para renderizar línea de tiempo de mejora
+function renderImprovementTimeline() {
+  const timeline = gameState.advancedStats.improvementTimeline;
+  
+  if (timeline.length === 0) {
+    return '<div style="color: rgba(255,255,255,0.6); text-align: center;">No hay datos suficientes para mostrar progreso</div>';
+  }
+  
+  const maxTime = Math.max(...timeline.map(item => item.averageTime));
+  const minTime = Math.min(...timeline.map(item => item.averageTime));
+  const timeRange = maxTime - minTime;
+  
+  return `
+    <div style="display: flex; align-items: flex-end; gap: 10px; height: 120px; padding: 20px 0;">
+      ${timeline.map((item, index) => {
+        const height = timeRange > 0 ? 80 - ((item.averageTime - minTime) / timeRange) * 60 : 40;
+        return `
+          <div style="display: flex; flex-direction: column; align-items: center; flex: 1;">
+            <div style="
+              background: linear-gradient(to top, #667eea, #764ba2); 
+              width: 20px; 
+              height: ${height}px; 
+              border-radius: 10px 10px 0 0;
+              position: relative;
+            " title="${formatTime(item.averageTime)} - ${item.sessions} sesiones">
+            </div>
+            <div style="color: rgba(255,255,255,0.7); font-size: 10px; margin-top: 5px;">${item.week.split('-W')[1]}</div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+    <div style="display: flex; justify-content: space-between; margin-top: 10px; color: rgba(255,255,255,0.6); font-size: 12px;">
+      <div>Mejor: ${formatTime(minTime)}</div>
+      <div>Peor: ${formatTime(maxTime)}</div>
+    </div>
+  `;
 }
 
 // Inicializar la aplicación
