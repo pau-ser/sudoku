@@ -1,14 +1,104 @@
-// app.js - Versión con anotaciones mejoradas
+// app.js - Versión completa con integración API (Opción 1)
 
-// Función seed para random determinístico
-Math.seedrandom = function(seed) {
-  let state = seed;
-  Math.random = function() {
-    state = (state * 9301 + 49297) % 233280;
-    return state / 233280;
-  };
-};
+// API Client
+class SudokuAPI {
+  static baseURL = 'http://localhost:3000/api';
 
+  static async request(endpoint, options = {}) {
+    const token = localStorage.getItem('sudoku-token');
+    const config = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+        ...options.headers,
+      },
+      ...options,
+    };
+
+    if (config.body && typeof config.body !== 'string') {
+      config.body = JSON.stringify(config.body);
+    }
+
+    try {
+      const response = await fetch(`${this.baseURL}${endpoint}`, config);
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `Error ${response.status}`);
+      }
+      
+      return data;
+    } catch (error) {
+      console.error('API Error:', error);
+      throw error;
+    }
+  }
+
+  // Auth endpoints
+  static async register(userData) {
+    return this.request('/auth/register', {
+      method: 'POST',
+      body: userData,
+    });
+  }
+
+  static async login(credentials) {
+    return this.request('/auth/login', {
+      method: 'POST',
+      body: credentials,
+    });
+  }
+
+  static async getProfile() {
+    return this.request('/auth/profile');
+  }
+
+  // Game endpoints
+  static async createGame(gameData) {
+    return this.request('/games/new', {
+      method: 'POST',
+      body: gameData,
+    });
+  }
+
+  static async makeMove(gameId, moveData) {
+    return this.request(`/games/${gameId}/move`, {
+      method: 'POST',
+      body: moveData,
+    });
+  }
+
+  static async getGame(gameId) {
+    return this.request(`/games/${gameId}`);
+  }
+
+  static async getGames() {
+    return this.request('/games');
+  }
+
+  static async useHint(gameId) {
+    return this.request(`/games/${gameId}/hint`, {
+      method: 'POST',
+    });
+  }
+
+  static async undoMove(gameId) {
+    return this.request(`/games/${gameId}/undo`, {
+      method: 'POST',
+    });
+  }
+
+  // Leaderboard
+  static async getLeaderboard() {
+    return this.request('/leaderboard/global');
+  }
+
+  static async getDifficultyLeaderboard(difficulty) {
+    return this.request(`/leaderboard/difficulty/${difficulty}`);
+  }
+}
+
+// Generador de Sudoku para modo offline
 class SudokuSolver {
   constructor(board) {
     this.board = board.map(row => [...row]);
@@ -151,7 +241,7 @@ class SoundSystem {
   error() { this.playTone(200, 0.2, 'sawtooth'); }
   hint() { this.playTone(1000, 0.15); }
   tick() { this.playTone(1200, 0.03); }
-  note() { this.playTone(900, 0.08); } // Nuevo sonido para notas
+  note() { this.playTone(900, 0.08); }
   complete() {
     this.playTone(523, 0.15);
     setTimeout(() => this.playTone(659, 0.15), 150);
@@ -164,7 +254,7 @@ class SoundSystem {
   }
 }
 
-// Estado del juego
+// Estado del juego actualizado para Opción 1
 const gameState = {
   currentPuzzle: null,
   userBoard: null,
@@ -176,12 +266,19 @@ const gameState = {
   timerInterval: null,
   theme: localStorage.getItem('sudoku-theme') || 'dark',
   moveHistory: [],
-  notes: {}, // Para modo notas - ahora mejorado
+  notes: {},
   notesMode: false,
   autoCheck: JSON.parse(localStorage.getItem('sudoku-autocheck') || 'true'),
   expertMode: false,
   timeAttackMode: false,
   timeAttackLimit: 600,
+  
+  // Propiedades para online
+  user: JSON.parse(localStorage.getItem('sudoku-user') || 'null'),
+  token: localStorage.getItem('sudoku-token') || null,
+  isOnline: false,
+  currentGameId: null,
+  
   stats: JSON.parse(localStorage.getItem('sudoku-stats') || '{"gamesWon":0,"bestTime":"--:--","streak":0,"totalTime":0,"byDifficulty":{}}'),
   savedGames: JSON.parse(localStorage.getItem('sudoku-saved') || '[]'),
   dailyChallenge: JSON.parse(localStorage.getItem('sudoku-daily') || 'null'),
@@ -195,28 +292,26 @@ const gameState = {
 function getScaleFactor() {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  
-  // Tamaño base más conservador
-  const baseWidth = 1366; // Resolución más común
+  const baseWidth = 1366;
   const baseHeight = 768;
   
   const scaleX = width / baseWidth;
   const scaleY = height / baseHeight;
   
-  // Usar el menor factor, con mínimo de 0.8 y máximo de 1.5
   const scale = Math.min(scaleX, scaleY);
   return Math.max(0.8, Math.min(scale, 1.5));
 }
 
 function getCellSize() {
   const scale = getScaleFactor();
-  return Math.floor(50 * scale); // Cambiado de 45 a 50
+  return Math.floor(50 * scale);
 }
 
 function getFontSize(base) {
   const scale = getScaleFactor();
   return Math.floor(base * scale);
 }
+
 // Temas
 const themes = {
   dark: {
@@ -461,6 +556,11 @@ function getCandidates(row, col) {
 }
 
 function isValidMove(row, col, num) {
+  // En modo online, el servidor valida los movimientos
+  if (gameState.isOnline && gameState.currentGameId) {
+    return true;
+  }
+  
   // Verificar fila
   for (let j = 0; j < 9; j++) {
     if (gameState.userBoard[row][j] === num) return false;
@@ -544,141 +644,271 @@ function showTimeUpScreen() {
   `;
 }
 
-// Funciones del juego
-function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack = false, isExpert = false) {
-  gameState.difficulty = difficulty;
-  gameState.timeAttackMode = isTimeAttack;
-  gameState.expertMode = isExpert;
-  
-  if (isDailyChallenge) {
-    const daily = getDailyChallenge();
-    if (daily.completed) {
-      showNotification('Ya completaste el reto diario 🎉');
-      return;
+// Funciones del juego actualizadas para Opción 1
+async function startNewGame(difficulty, isDailyChallenge = false, isTimeAttack = false, isExpert = false) {
+  try {
+    gameState.difficulty = difficulty;
+    gameState.timeAttackMode = isTimeAttack;
+    gameState.expertMode = isExpert;
+    
+    if (isDailyChallenge) {
+      const daily = getDailyChallenge();
+      if (daily.completed) {
+        showNotification('Ya completaste el reto diario 🎉');
+        return;
+      }
+      gameState.currentPuzzle = daily.puzzle;
+      gameState.userBoard = daily.puzzle.puzzle.map(row => [...row]);
+      gameState.currentGameId = null;
+      showNotification(`🏆 Reto diario ${difficulty}`);
+    } else if (gameState.isOnline) {
+      const mode = isTimeAttack ? 'timeAttack' : isExpert ? 'expert' : 'normal';
+      
+      const response = await SudokuAPI.createGame({
+        difficulty,
+        mode
+      });
+      
+      gameState.currentPuzzle = {
+        puzzle: response.puzzle,
+        solution: null,
+        clues: response.clues
+      };
+      gameState.userBoard = response.puzzle.map(row => [...row]);
+      gameState.currentGameId = response.gameId;
+      gameState.expertMode = response.expertMode || false;
+      gameState.timeAttackLimit = response.timeAttackLimit || 600;
+      
+      showNotification(`🎮 Nuevo juego ${difficulty} creado online`);
+    } else {
+      const generator = new SudokuGenerator();
+      gameState.currentPuzzle = generator.generate(difficulty);
+      gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
+      gameState.currentGameId = null;
+      showNotification(`🎮 Nuevo juego ${difficulty} (offline)`);
     }
-    gameState.currentPuzzle = daily.puzzle;
-  } else {
+    
+    // Reiniciar estado del juego
+    gameState.selectedCell = null;
+    gameState.timer = 0;
+    gameState.mistakes = 0;
+    gameState.hintsUsed = 0;
+    gameState.moveHistory = [];
+    gameState.notes = {};
+    gameState.notesMode = false;
+    
+    // Limpiar timer anterior
+    if (gameState.timerInterval) {
+      clearInterval(gameState.timerInterval);
+    }
+    
+    // Iniciar nuevo timer
+    gameState.timerInterval = setInterval(() => {
+      if (gameState.timeAttackMode && gameState.timer >= gameState.timeAttackLimit) {
+        clearInterval(gameState.timerInterval);
+        showTimeUpScreen();
+        return;
+      }
+      gameState.timer++;
+      if (gameState.timer % 60 === 0) gameState.sound.tick();
+      updateTimer();
+    }, 1000);
+    
+    gameState.sound.click();
+    renderGame();
+    
+  } catch (error) {
+    console.error('Error starting new game:', error);
+    showNotification(`❌ Error: ${error.message}`);
+    
+    // Fallback a modo offline
     const generator = new SudokuGenerator();
     gameState.currentPuzzle = generator.generate(difficulty);
+    gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
+    gameState.currentGameId = null;
+    renderGame();
   }
-  
-  gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
-  gameState.selectedCell = null;
-  gameState.timer = 0;
-  gameState.mistakes = 0;
-  gameState.hintsUsed = 0;
-  gameState.moveHistory = [];
-  gameState.notes = {};
-  gameState.notesMode = false;
-  
-  if (gameState.timerInterval) clearInterval(gameState.timerInterval);
-  gameState.timerInterval = setInterval(() => {
-    if (gameState.timeAttackMode && gameState.timer >= gameState.timeAttackLimit) {
-      clearInterval(gameState.timerInterval);
-      showTimeUpScreen();
-      return;
-    }
-    gameState.timer++;
-    if (gameState.timer % 60 === 0) gameState.sound.tick();
-    updateTimer();
-  }, 1000);
-  
-  gameState.sound.click();
-  renderGame();
 }
 
 function selectCell(row, col) {
-  gameState.selectedCell = [row, col];
-  gameState.sound.click();
-  renderBoard();
+  // Solo permitir seleccionar celdas editables
+  if (gameState.currentPuzzle && gameState.currentPuzzle.puzzle[row][col] === 0) {
+    gameState.selectedCell = [row, col];
+    gameState.sound.click();
+  } else {
+    // Si es una celda fija, solo sonido
+    gameState.sound.click();
+    return; // No cambiar selección
+  }
+  renderBoard(); // Solo renderizar el tablero, no todo el juego
 }
 
-function inputNumber(num) {
-  if (!gameState.selectedCell) {
+async function inputNumber(num) {
+  if (!gameState.selectedCell || !gameState.currentPuzzle) {
     showNotification('❌ Selecciona una celda primero');
     return;
   }
+  
   const [row, col] = gameState.selectedCell;
-  if (gameState.currentPuzzle.puzzle[row][col] !== 0) return;
   
-  const key = `${row}-${col}`;
-  
-  if (gameState.notesMode) {
-    // Modo anotaciones
-    if (!gameState.notes[key]) gameState.notes[key] = new Set();
-    
-    if (gameState.notes[key].has(num)) {
-      gameState.notes[key].delete(num);
-    } else {
-      gameState.notes[key].add(num);
-    }
-    
-    // Si no quedan notas, eliminar la entrada
-    if (gameState.notes[key].size === 0) {
-      delete gameState.notes[key];
-    }
-    
-    gameState.sound.note();
-    renderBoard();
+  // Verificar que la celda sea editable
+  if (gameState.currentPuzzle.puzzle[row][col] !== 0) {
+    showNotification('❌ No puedes modificar celdas fijas');
     return;
   }
   
-  // Modo normal - entrada de número
-  if (!gameState.expertMode) {
-    gameState.moveHistory.push({
-      row,
-      col,
-      oldValue: gameState.userBoard[row][col],
-      newValue: num,
-      oldNotes: gameState.notes[key] ? new Set(gameState.notes[key]) : null
-    });
-  }
+  const key = `${row}-${col}`;
   
-  // Si ya hay un número, borrarlo (toggle)
-  if (gameState.userBoard[row][col] === num) {
-    gameState.userBoard[row][col] = 0;
-    gameState.sound.click();
-  } else {
-    gameState.userBoard[row][col] = num;
-    
-    // Limpiar anotaciones de esta celda al ingresar un número
-    if (gameState.notes[key]) delete gameState.notes[key];
-    
-    // Verificar si es correcto
-    if (num !== gameState.currentPuzzle.solution[row][col]) {
-      gameState.mistakes++;
-      gameState.sound.error();
-      updateMistakes();
+  try {
+    if (gameState.notesMode) {
+      // Modo anotaciones
+      if (!gameState.notes[key]) {
+        gameState.notes[key] = new Set();
+      }
+      
+      if (gameState.notes[key].has(num)) {
+        gameState.notes[key].delete(num);
+        if (gameState.notes[key].size === 0) {
+          delete gameState.notes[key];
+        }
+      } else {
+        gameState.notes[key].add(num);
+      }
+      
+      // Si estamos online, sincronizar anotaciones
+      if (gameState.isOnline && gameState.currentGameId) {
+        try {
+          await SudokuAPI.makeMove(gameState.currentGameId, {
+            row,
+            col,
+            value: num,
+            notesMode: true
+          });
+        } catch (error) {
+          console.error('Error syncing notes:', error);
+        }
+      }
+      
+      gameState.sound.note();
+      renderBoard();
+      
     } else {
-      gameState.sound.input();
-      // Limpiar anotaciones relacionadas en fila, columna y cuadro
-      cleanRelatedNotes(row, col, num);
+      // Modo normal - entrada de número
+      const oldValue = gameState.userBoard[row][col];
+      
+      // Si estamos online, hacer el movimiento via API
+      if (gameState.isOnline && gameState.currentGameId) {
+        try {
+          const response = await SudokuAPI.makeMove(gameState.currentGameId, {
+            row,
+            col,
+            value: num,
+            notesMode: false
+          });
+          
+          // Actualizar estado local con la respuesta del servidor
+          gameState.userBoard = response.userBoard || gameState.userBoard;
+          gameState.mistakes = response.mistakes || gameState.mistakes;
+          gameState.notes = response.notes || gameState.notes;
+          
+          if (response.completed) {
+            clearInterval(gameState.timerInterval);
+            gameState.timer = response.time || gameState.timer;
+            showWinScreen();
+            return;
+          }
+          
+          if (!response.isCorrect && num !== 0) {
+            gameState.sound.error();
+          } else {
+            gameState.sound.input();
+          }
+          
+        } catch (error) {
+          console.error('Error making move:', error);
+          showNotification(`❌ Error: ${error.message}`);
+          return;
+        }
+      } else {
+        // Modo offline
+        if (oldValue === num) {
+          gameState.userBoard[row][col] = 0;
+          gameState.sound.click();
+        } else {
+          gameState.userBoard[row][col] = num;
+          
+          // Limpiar anotaciones de esta celda
+          if (gameState.notes[key]) {
+            delete gameState.notes[key];
+          }
+          
+          // Verificar si es correcto (solo en modo offline con solución)
+          if (gameState.currentPuzzle.solution) {
+            const isCorrect = num === gameState.currentPuzzle.solution[row][col];
+            
+            if (!isCorrect && num !== 0) {
+              gameState.mistakes++;
+              gameState.sound.error();
+            } else {
+              gameState.sound.input();
+              cleanRelatedNotes(row, col, num);
+            }
+          } else {
+            // Si no hay solución (modo online), solo sonido de input
+            gameState.sound.input();
+          }
+          
+          // Solo guardar en el historial si es un cambio real
+          if (oldValue !== num && !gameState.expertMode) {
+            gameState.moveHistory.push({
+              row,
+              col,
+              oldValue: oldValue,
+              newValue: num,
+              oldNotes: gameState.notes[key] ? new Set(gameState.notes[key]) : null
+            });
+          }
+        }
+        
+        checkWin();
+      }
+      
+      renderBoard();
+      updateMistakes();
     }
+    
+  } catch (error) {
+    console.error('Error in inputNumber:', error);
+    showNotification(`❌ Error: ${error.message}`);
   }
-  
-  renderBoard();
-  checkWin();
 }
 
 function cleanRelatedNotes(row, col, num) {
-  // Limpiar el número de las anotaciones en la fila, columna y cuadro
-  for (let i = 0; i < 9; i++) {
-    // Fila
-    const rowKey = `${row}-${i}`;
+  if (num === 0 || !gameState.notes) return;
+  
+  // Limpiar el número de las anotaciones en la fila
+  for (let j = 0; j < 9; j++) {
+    const rowKey = `${row}-${j}`;
     if (gameState.notes[rowKey]) {
       gameState.notes[rowKey].delete(num);
-      if (gameState.notes[rowKey].size === 0) delete gameState.notes[rowKey];
-    }
-    
-    // Columna
-    const colKey = `${i}-${col}`;
-    if (gameState.notes[colKey]) {
-      gameState.notes[colKey].delete(num);
-      if (gameState.notes[colKey].size === 0) delete gameState.notes[colKey];
+      if (gameState.notes[rowKey].size === 0) {
+        delete gameState.notes[rowKey];
+      }
     }
   }
   
-  // Cuadro 3x3
+  // Limpiar el número de las anotaciones en la columna
+  for (let i = 0; i < 9; i++) {
+    const colKey = `${i}-${col}`;
+    if (gameState.notes[colKey]) {
+      gameState.notes[colKey].delete(num);
+      if (gameState.notes[colKey].size === 0) {
+        delete gameState.notes[colKey];
+      }
+    }
+  }
+  
+  // Limpiar el número de las anotaciones en el cuadro 3x3
   const boxRow = Math.floor(row / 3) * 3;
   const boxCol = Math.floor(col / 3) * 3;
   for (let i = boxRow; i < boxRow + 3; i++) {
@@ -686,118 +916,181 @@ function cleanRelatedNotes(row, col, num) {
       const boxKey = `${i}-${j}`;
       if (gameState.notes[boxKey]) {
         gameState.notes[boxKey].delete(num);
-        if (gameState.notes[boxKey].size === 0) delete gameState.notes[boxKey];
+        if (gameState.notes[boxKey].size === 0) {
+          delete gameState.notes[boxKey];
+        }
       }
     }
   }
 }
 
 function checkWin() {
-  const isComplete = gameState.userBoard.every((row, i) => 
-    row.every((cell, j) => cell === gameState.currentPuzzle.solution[i][j])
-  );
+  // En modo online, el servidor se encarga de verificar victoria
+  if (gameState.isOnline && gameState.currentGameId) {
+    return;
+  }
   
-  if (isComplete) {
-    clearInterval(gameState.timerInterval);
-    gameState.stats.gamesWon++;
-    gameState.stats.streak++;
-    gameState.stats.totalTime += gameState.timer;
+  // En modo offline, verificar localmente solo si tenemos solución
+  if (gameState.currentPuzzle && gameState.currentPuzzle.solution) {
+    const isComplete = gameState.userBoard.every((row, i) => 
+      row.every((cell, j) => cell === gameState.currentPuzzle.solution[i][j])
+    );
     
-    if (!gameState.stats.byDifficulty[gameState.difficulty]) {
-      gameState.stats.byDifficulty[gameState.difficulty] = { won: 0, bestTime: null };
+    if (isComplete) {
+      clearInterval(gameState.timerInterval);
+      updateStatsAfterWin();
+      gameState.sound.complete();
+      showWinScreen();
     }
-    gameState.stats.byDifficulty[gameState.difficulty].won++;
-    
-    const diffBest = gameState.stats.byDifficulty[gameState.difficulty].bestTime;
-    if (!diffBest || gameState.timer < diffBest) {
-      gameState.stats.byDifficulty[gameState.difficulty].bestTime = gameState.timer;
-    }
-    
-    if (gameState.stats.bestTime === '--:--') {
-      gameState.stats.bestTime = formatTime(gameState.timer);
-    } else {
-      const currentBest = parseInt(gameState.stats.bestTime.split(':')[0]) * 60 + 
-                         parseInt(gameState.stats.bestTime.split(':')[1]);
-      if (gameState.timer < currentBest) {
-        gameState.stats.bestTime = formatTime(gameState.timer);
-      }
-    }
-    
-    if (gameState.dailyChallenge && gameState.dailyChallenge.date === new Date().toDateString()) {
-      if (!gameState.dailyChallenge.completed) {
-        gameState.dailyChallenge.completed = true;
-        gameState.dailyChallenge.time = gameState.timer;
-        gameState.dailyChallenge.mistakes = gameState.mistakes;
-        localStorage.setItem('sudoku-daily', JSON.stringify(gameState.dailyChallenge));
-      }
-    }
-    
-    saveStats();
-    saveToLeaderboard();
-    saveProgress();
-    gameState.sound.complete();
-    showWinScreen();
   }
 }
 
-function getHint() {
+// Función auxiliar para actualizar estadísticas
+function updateStatsAfterWin() {
+  if (!gameState.stats) gameState.stats = { gamesWon: 0, bestTime: '--:--', streak: 0, totalTime: 0, byDifficulty: {} };
+  
+  gameState.stats.gamesWon = (gameState.stats.gamesWon || 0) + 1;
+  gameState.stats.streak = (gameState.stats.streak || 0) + 1;
+  gameState.stats.totalTime = (gameState.stats.totalTime || 0) + gameState.timer;
+  
+  if (!gameState.stats.byDifficulty[gameState.difficulty]) {
+    gameState.stats.byDifficulty[gameState.difficulty] = { won: 0, bestTime: null };
+  }
+  gameState.stats.byDifficulty[gameState.difficulty].won++;
+  
+  const diffBest = gameState.stats.byDifficulty[gameState.difficulty].bestTime;
+  if (!diffBest || gameState.timer < diffBest) {
+    gameState.stats.byDifficulty[gameState.difficulty].bestTime = gameState.timer;
+  }
+  
+  if (gameState.stats.bestTime === '--:--') {
+    gameState.stats.bestTime = formatTime(gameState.timer);
+  } else {
+    const currentBest = parseInt(gameState.stats.bestTime.split(':')[0]) * 60 + 
+                       parseInt(gameState.stats.bestTime.split(':')[1]);
+    if (gameState.timer < currentBest) {
+      gameState.stats.bestTime = formatTime(gameState.timer);
+    }
+  }
+  
+  if (gameState.dailyChallenge && gameState.dailyChallenge.date === new Date().toDateString()) {
+    if (!gameState.dailyChallenge.completed) {
+      gameState.dailyChallenge.completed = true;
+      gameState.dailyChallenge.time = gameState.timer;
+      gameState.dailyChallenge.mistakes = gameState.mistakes;
+      localStorage.setItem('sudoku-daily', JSON.stringify(gameState.dailyChallenge));
+    }
+  }
+  
+  saveStats();
+  saveToLeaderboard();
+  saveProgress();
+}
+
+async function getHint() {
   if (gameState.expertMode) {
     showNotification('❌ Pistas deshabilitadas en modo experto');
     return;
   }
   
-  if (!gameState.selectedCell) {
+  if (!gameState.selectedCell || !gameState.currentPuzzle) {
     showNotification('❌ Selecciona una celda primero');
     return;
   }
+  
   const [row, col] = gameState.selectedCell;
   if (gameState.currentPuzzle.puzzle[row][col] !== 0) {
     showNotification('❌ Esta celda ya tiene un valor fijo');
     return;
   }
   
-  gameState.userBoard[row][col] = gameState.currentPuzzle.solution[row][col];
-  
-  // Limpiar anotaciones de esta celda
-  const key = `${row}-${col}`;
-  if (gameState.notes[key]) delete gameState.notes[key];
-  
-  // Limpiar anotaciones relacionadas
-  cleanRelatedNotes(row, col, gameState.currentPuzzle.solution[row][col]);
-  
-  gameState.hintsUsed++;
-  gameState.sound.hint();
-  renderBoard();
-  updateHints();
-  checkWin();
+  try {
+    if (gameState.isOnline && gameState.currentGameId) {
+      const response = await SudokuAPI.useHint(gameState.currentGameId);
+      
+      gameState.userBoard = response.userBoard || gameState.userBoard;
+      gameState.hintsUsed = response.hintsUsed || gameState.hintsUsed;
+      
+      if (response.completed) {
+        clearInterval(gameState.timerInterval);
+        gameState.timer = response.time || gameState.timer;
+        showWinScreen();
+        return;
+      }
+      
+    } else {
+      // Modo offline - usar solución local
+      if (!gameState.currentPuzzle.solution) {
+        showNotification('❌ No hay solución disponible para pistas');
+        return;
+      }
+      
+      gameState.userBoard[row][col] = gameState.currentPuzzle.solution[row][col];
+      gameState.hintsUsed++;
+      
+      // Limpiar anotaciones de esta celda
+      const key = `${row}-${col}`;
+      if (gameState.notes[key]) delete gameState.notes[key];
+      
+      if (gameState.currentPuzzle.solution) {
+        cleanRelatedNotes(row, col, gameState.currentPuzzle.solution[row][col]);
+      }
+      
+      checkWin();
+    }
+    
+    gameState.sound.hint();
+    renderBoard();
+    updateHints();
+    
+  } catch (error) {
+    console.error('Error getting hint:', error);
+    showNotification(`❌ Error: ${error.message}`);
+  }
 }
 
-function undoMove() {
+async function undoMove() {
   if (gameState.expertMode) {
     showNotification('❌ Deshacer deshabilitado en modo experto');
     return;
   }
   
-  if (gameState.moveHistory.length === 0) {
-    showNotification('❌ No hay movimientos para deshacer');
-    return;
+  try {
+    if (gameState.isOnline && gameState.currentGameId) {
+      const response = await SudokuAPI.undoMove(gameState.currentGameId);
+      
+      gameState.userBoard = response.userBoard || gameState.userBoard;
+      gameState.moveHistory = response.moveHistory || gameState.moveHistory;
+      
+    } else {
+      // Modo offline
+      if (!gameState.moveHistory || gameState.moveHistory.length === 0) {
+        showNotification('❌ No hay movimientos para deshacer');
+        return;
+      }
+      
+      const lastMove = gameState.moveHistory.pop();
+      gameState.userBoard[lastMove.row][lastMove.col] = lastMove.oldValue;
+      
+      if (lastMove.oldNotes) {
+        gameState.notes[`${lastMove.row}-${lastMove.col}`] = lastMove.oldNotes;
+      } else {
+        delete gameState.notes[`${lastMove.row}-${lastMove.col}`];
+      }
+    }
+    
+    gameState.sound.click();
+    renderBoard();
+    
+  } catch (error) {
+    console.error('Error undoing move:', error);
+    showNotification(`❌ Error: ${error.message}`);
   }
-  
-  const lastMove = gameState.moveHistory.pop();
-  gameState.userBoard[lastMove.row][lastMove.col] = lastMove.oldValue;
-  
-  if (lastMove.oldNotes) {
-    gameState.notes[`${lastMove.row}-${lastMove.col}`] = lastMove.oldNotes;
-  } else {
-    delete gameState.notes[`${lastMove.row}-${lastMove.col}`];
-  }
-  
-  gameState.sound.click();
-  renderBoard();
 }
 
 function findConflicts() {
   const conflicts = [];
+  if (!gameState.userBoard || !gameState.currentPuzzle) return conflicts;
   
   for (let i = 0; i < 9; i++) {
     for (let j = 0; j < 9; j++) {
@@ -933,8 +1226,254 @@ style.textContent = `
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(102,126,234,0.8);
   }
+  /* Mejoras visuales para el tablero */
+  #board {
+      font-family: 'Arial', sans-serif;
+  }
+  /* Efectos hover para celdas */
+  #board div[onclick]:hover {
+      filter: brightness(0.95);
+      transform: scale(1.02);
+      z-index: 2;
+  }
+  /* Animación para números nuevos */
+  @keyframes popIn {
+      0% { transform: scale(0.8); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+  }
+  #board div[onclick] div {
+      animation: popIn 0.2s ease-out;
+  }
+  /* Mejora para botones numéricos */
+  button {
+      transition: all 0.2s ease;
+  }
+  button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+  }
+  button:active {
+      transform: translateY(0);
+  }
 `;
 document.head.appendChild(style);
+
+// Funciones de autenticación y renderizado (se mantienen igual que antes)
+function renderAuth() {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.menuBg}; display: flex; align-items: center; justify-content: center; padding: 20px;">
+      <div style="max-width: 500px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 50px; border: 1px solid rgba(255,255,255,0.2); text-align: center;">
+        <h1 style="font-size: 48px; font-weight: bold; color: white; margin-bottom: 10px;">SUDOKU PRO</h1>
+        <p style="color: rgba(255,255,255,0.8); margin-bottom: 40px;">Juega online y compite con otros</p>
+        
+        <div id="auth-form">
+          <div style="display: flex; gap: 15px; margin-bottom: 30px;">
+            <button onclick="showLoginForm()" style="
+              flex: 1;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              color: white;
+              padding: 15px;
+              border: none;
+              border-radius: 12px;
+              font-size: 16px;
+              font-weight: bold;
+              cursor: pointer;
+            ">Iniciar Sesión</button>
+            <button onclick="showRegisterForm()" style="
+              flex: 1;
+              background: rgba(255,255,255,0.2);
+              color: white;
+              padding: 15px;
+              border: none;
+              border-radius: 12px;
+              font-size: 16px;
+              font-weight: bold;
+              cursor: pointer;
+            ">Registrarse</button>
+          </div>
+          
+          <div id="login-form" style="display: none;">
+            <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px;">
+              <input type="email" id="login-email" placeholder="Email" style="
+                padding: 15px;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                background: rgba(255,255,255,0.9);
+              ">
+              <input type="password" id="login-password" placeholder="Contraseña" style="
+                padding: 15px;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                background: rgba(255,255,255,0.9);
+              ">
+            </div>
+            <button onclick="handleLogin()" style="
+              width: 100%;
+              background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+              color: white;
+              padding: 15px;
+              border: none;
+              border-radius: 12px;
+              font-size: 16px;
+              font-weight: bold;
+              cursor: pointer;
+              margin-bottom: 15px;
+            ">🎮 Iniciar Sesión</button>
+          </div>
+          
+          <div id="register-form" style="display: none;">
+            <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px;">
+              <input type="text" id="register-username" placeholder="Nombre de usuario" style="
+                padding: 15px;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                background: rgba(255,255,255,0.9);
+              ">
+              <input type="email" id="register-email" placeholder="Email" style="
+                padding: 15px;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                background: rgba(255,255,255,0.9);
+              ">
+              <input type="password" id="register-password" placeholder="Contraseña" style="
+                padding: 15px;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                background: rgba(255,255,255,0.9);
+              ">
+            </div>
+            <button onclick="handleRegister()" style="
+              width: 100%;
+              background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+              color: white;
+              padding: 15px;
+              border: none;
+              border-radius: 12px;
+              font-size: 16px;
+              font-weight: bold;
+              cursor: pointer;
+              margin-bottom: 15px;
+            ">🚀 Crear Cuenta</button>
+          </div>
+        </div>
+        
+        <button onclick="playOffline()" style="
+          width: 100%;
+          background: rgba(255,255,255,0.1);
+          color: white;
+          padding: 15px;
+          border: 1px solid rgba(255,255,255,0.3);
+          border-radius: 12px;
+          font-size: 16px;
+          font-weight: bold;
+          cursor: pointer;
+        ">🎯 Jugar Sin Conexión</button>
+        
+        <div style="margin-top: 30px; color: rgba(255,255,255,0.6); font-size: 14px;">
+          Al registrarte, podrás guardar tu progreso en la nube y competir en rankings globales
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function showLoginForm() {
+  document.getElementById('login-form').style.display = 'block';
+  document.getElementById('register-form').style.display = 'none';
+}
+
+function showRegisterForm() {
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('register-form').style.display = 'block';
+}
+
+async function handleLogin() {
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  
+  if (!email || !password) {
+    showNotification('❌ Por favor completa todos los campos');
+    return;
+  }
+  
+  try {
+    const result = await SudokuAPI.login({ email, password });
+    
+    localStorage.setItem('sudoku-token', result.token);
+    localStorage.setItem('sudoku-user', JSON.stringify(result.user));
+    
+    gameState.user = result.user;
+    gameState.token = result.token;
+    gameState.isOnline = true;
+    
+    gameState.sound.complete();
+    showNotification(`🎉 ¡Bienvenido de nuevo, ${result.user.username}!`);
+    renderMenu();
+    
+  } catch (error) {
+    showNotification(`❌ Error: ${error.message}`);
+  }
+}
+
+async function handleRegister() {
+  const username = document.getElementById('register-username').value;
+  const email = document.getElementById('register-email').value;
+  const password = document.getElementById('register-password').value;
+  
+  if (!username || !email || !password) {
+    showNotification('❌ Por favor completa todos los campos');
+    return;
+  }
+  
+  if (password.length < 6) {
+    showNotification('❌ La contraseña debe tener al menos 6 caracteres');
+    return;
+  }
+  
+  try {
+    const result = await SudokuAPI.register({ username, email, password });
+    
+    localStorage.setItem('sudoku-token', result.token);
+    localStorage.setItem('sudoku-user', JSON.stringify(result.user));
+    
+    gameState.user = result.user;
+    gameState.token = result.token;
+    gameState.isOnline = true;
+    
+    gameState.sound.complete();
+    showNotification(`🎉 ¡Cuenta creada exitosamente, ${result.user.username}!`);
+    renderMenu();
+    
+  } catch (error) {
+    showNotification(`❌ Error: ${error.message}`);
+  }
+}
+
+function playOffline() {
+  gameState.isOnline = false;
+  gameState.user = null;
+  gameState.token = null;
+  showNotification('🔌 Modo sin conexión activado');
+  renderMenu();
+}
+
+function logout() {
+  localStorage.removeItem('sudoku-token');
+  localStorage.removeItem('sudoku-user');
+  gameState.user = null;
+  gameState.token = null;
+  gameState.isOnline = false;
+  showNotification('👋 Sesión cerrada');
+  renderAuth();
+}
 
 // Funciones de renderizado
 function renderMenu() {
@@ -950,7 +1489,28 @@ function renderMenu() {
           <h1 style="font-size: 64px; font-weight: bold; color: white; margin: 0 0 15px 0; letter-spacing: -2px;">SUDOKU PRO</h1>
           <p style="font-size: 20px; color: rgba(255,255,255,0.9);">Lógica pura. Solución única garantizada.</p>
         </div>
-
+        ${gameState.user ? `
+        <div style="text-align: center; margin-bottom: 30px;">
+          <div style="font-size: 24px; color: white; margin-bottom: 10px;">
+            👋 ¡Hola, <strong>${gameState.user.username}</strong>!
+          </div>
+          <div style="display: flex; justify-content: center; gap: 20px; color: rgba(255,255,255,0.8); font-size: 14px;">
+            <div>Nivel ${gameState.user.level}</div>
+            <div>${gameState.user.xp} XP</div>
+            <div>${gameState.user.coins} 🪙</div>
+          </div>
+          <button onclick="logout()" style="
+            background: rgba(239,68,68,0.6);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-top: 10px;
+          ">Cerrar Sesión</button>
+        </div>
+        ` : ''}
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-bottom: 30px;">
           <!-- Nueva Partida -->
           <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 25px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
@@ -1398,16 +1958,17 @@ function renderGame() {
 
 function renderBoard(conflicts = []) {
   const boardEl = document.getElementById('board');
-  if (!boardEl) return;
+  if (!boardEl || !gameState.currentPuzzle) return;
 
   const cellSize = getCellSize();
-  const fontSize = getFontSize(18);
-  const noteFontSize = getFontSize(9);
+  const fontSize = getFontSize(20);
+  const noteFontSize = getFontSize(10);
   
-  // Obtener el valor seleccionado
+  // Obtener información de la celda seleccionada
   let selectedValue = null;
   let selectedRow = null;
   let selectedCol = null;
+  
   if (gameState.selectedCell) {
     selectedRow = gameState.selectedCell[0];
     selectedCol = gameState.selectedCell[1];
@@ -1417,7 +1978,7 @@ function renderBoard(conflicts = []) {
     }
   }
   
-  let html = '<div style="display: inline-block; background: #1f2937; padding: 4px; border-radius: 15px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">';
+  let html = '<div style="display: inline-block; background: #374151; padding: 4px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">';
   
   for (let i = 0; i < 9; i++) {
     html += '<div style="display: flex;">';
@@ -1430,36 +1991,58 @@ function renderBoard(conflicts = []) {
       const notes = gameState.notes[key];
       const hasConflict = conflicts.some(c => c[0] === i && c[1] === j);
       
-      const isError = !isGiven && userValue !== 0 && userValue !== gameState.currentPuzzle.solution[i][j];
+      const isError = !isGiven && userValue !== 0 && gameState.currentPuzzle.solution && 
+                     userValue !== gameState.currentPuzzle.solution[i][j];
       
-      // Nuevo: detectar si debe resaltarse
-      const shouldHighlightSame = selectedValue && selectedValue !== 0 && displayValue === selectedValue && !isSelected;
-      const shouldHighlightRow = selectedRow !== null && i === selectedRow && !isSelected;
-      const shouldHighlightCol = selectedCol !== null && j === selectedCol && !isSelected;
-      const shouldHighlight = shouldHighlightSame || shouldHighlightRow || shouldHighlightCol;
+      // Determinar colores y estilos - CORREGIDO
+      let bgColor, textColor;
       
-      let bgColor = gameState.customColors.user;
-      if (isSelected) bgColor = gameState.customColors.selected;
-      else if (shouldHighlightSame) bgColor = '#bfdbfe'; // Azul más intenso para números iguales
-      else if (shouldHighlight) bgColor = '#e0e7ff'; // Azul claro para fila/columna
-      else if (isGiven) bgColor = gameState.customColors.given;
-      else if (isError || hasConflict) bgColor = gameState.customColors.error;
+      if (isSelected) {
+        bgColor = '#3b82f6'; // Azul para seleccionado
+        textColor = 'white';
+      } else if (isGiven) {
+        bgColor = '#f3f4f6'; // Gris claro para celdas fijas
+        textColor = '#1f2937';
+      } else if (isError || hasConflict) {
+        bgColor = '#fecaca'; // Rojo claro para errores
+        textColor = '#dc2626';
+      } else {
+        bgColor = '#ffffff'; // Blanco para celdas editables
+        textColor = '#2563eb';
+      }
       
-      let textColor = isGiven ? '#1f2937' : ((isError || hasConflict) ? '#dc2626' : '#2563eb');
-      let borderRight = (j % 3 === 2 && j !== 8) ? '3px solid #1f2937' : '1px solid #d1d5db';
-      let borderBottom = (i % 3 === 2 && i !== 8) ? '3px solid #1f2937' : '1px solid #d1d5db';
+      // Resaltar fila, columna y cuadro de la celda seleccionada - CORREGIDO
+      if (selectedRow !== null && !isSelected) {
+        const sameRow = i === selectedRow;
+        const sameCol = j === selectedCol;
+        const sameBox = Math.floor(i / 3) === Math.floor(selectedRow / 3) && 
+                       Math.floor(j / 3) === Math.floor(selectedCol / 3);
+        const sameNumber = selectedValue !== 0 && displayValue === selectedValue;
+        
+        if (sameNumber) {
+          bgColor = '#bfdbfe'; // Azul más intenso para números iguales
+        } else if (sameRow || sameCol) {
+          bgColor = '#eff6ff'; // Azul claro para fila/columna
+        } else if (sameBox) {
+          bgColor = '#f0f9ff'; // Azul muy claro para cuadro
+        }
+      }
       
-      // Renderizar contenido de la celda
+      // Bordes más gruesos para los cuadros 3x3
+      const borderRight = (j % 3 === 2 && j !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
+      const borderBottom = (i % 3 === 2 && i !== 8) ? '2px solid #1f2937' : '1px solid #9ca3af';
+      
+      // Contenido de la celda
       let cellContent = '';
-      if (displayValue) {
-        cellContent = displayValue;
+      if (displayValue !== 0) {
+        cellContent = `<div style="font-size: ${fontSize}px; font-weight: bold;">${displayValue}</div>`;
       } else if (notes && notes.size > 0) {
-        // Mostrar notas en una cuadrícula 3x3
+        // Mostrar notas en grid 3x3
         const notesArray = Array.from(notes).sort();
         cellContent = `
-          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; width: 100%; height: 100%; padding: 2px;">
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 100%; padding: 2px; gap: 1px;">
             ${[1,2,3,4,5,6,7,8,9].map(n => 
-              `<div style="font-size: 9px; color: #6b7280; display: flex; align-items: center; justify-content: center;">
+              `<div style="display: flex; align-items: center; justify-content: center; font-size: ${noteFontSize}px; color: #6b7280; font-weight: normal;">
                 ${notesArray.includes(n) ? n : ''}
               </div>`
             ).join('')}
@@ -1474,16 +2057,16 @@ function renderBoard(conflicts = []) {
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: ${displayValue ? fontSize : noteFontSize}px;
-          font-weight: ${displayValue ? 'bold' : 'normal'};
           background: ${bgColor};
           color: ${textColor};
           border-right: ${borderRight};
           border-bottom: ${borderBottom};
           cursor: ${isGiven ? 'default' : 'pointer'};
           transition: all 0.15s;
-          ${isSelected ? 'box-shadow: inset 0 0 0 3px #3b82f6;' : ''}
+          user-select: none;
+          ${isSelected ? 'box-shadow: inset 0 0 0 2px #1d4ed8; z-index: 1;' : ''}
           position: relative;
+          font-family: Arial, sans-serif;
         ">
           ${cellContent}
         </div>
@@ -1501,8 +2084,17 @@ function updateTimer() {
     if (gameState.timeAttackMode) {
       const timeLeft = gameState.timeAttackLimit - gameState.timer;
       timerEl.textContent = formatTime(timeLeft);
+      if (timeLeft < 60) {
+        timerEl.style.color = '#ef4444';
+        timerEl.style.animation = 'pulse 1s infinite';
+      } else {
+        timerEl.style.color = '';
+        timerEl.style.animation = '';
+      }
     } else {
       timerEl.textContent = formatTime(gameState.timer);
+      timerEl.style.color = '';
+      timerEl.style.animation = '';
     }
   }
 }
@@ -1597,11 +2189,98 @@ function showWinScreen() {
       }
     </style>
   `;
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes slideIn {
+      from { transform: translateX(400px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes slideOut {
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(400px); opacity: 0; }
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-30px); }
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    ::-webkit-scrollbar {
+      width: 10px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.1);
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(102,126,234,0.5);
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(102,126,234,0.8);
+    }
+    /* Mejoras visuales para el tablero */
+    #board {
+        font-family: 'Arial', sans-serif;
+    }
+    /* Efectos hover para celdas - CORREGIDO */
+    #board div[onclick]:not([style*="cursor: default"]):hover {
+        filter: brightness(0.95);
+        transform: scale(1.02);
+        z-index: 2;
+    }
+    /* Animación para números nuevos */
+    @keyframes popIn {
+        0% { transform: scale(0.8); opacity: 0; }
+        100% { transform: scale(1); opacity: 1; }
+    }
+    #board div[onclick] div {
+        animation: popIn 0.2s ease-out;
+    }
+    /* Mejora para botones numéricos */
+    button {
+        transition: all 0.2s ease;
+    }
+    button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    button:active {
+        transform: translateY(0);
+    }
+  `;
+  document.head.appendChild(style);
 }
+
 
 // Inicializar la aplicación
 document.addEventListener('DOMContentLoaded', () => {
-  renderMenu();
+  // Verificar si hay usuario logueado
+  const token = localStorage.getItem('sudoku-token');
+  const user = localStorage.getItem('sudoku-user');
+  
+  if (token && user) {
+    try {
+      gameState.token = token;
+      gameState.user = JSON.parse(user);
+      gameState.isOnline = true;
+      
+      // Verificar que el token sea válido
+      SudokuAPI.getProfile().catch(() => {
+        // Token inválido, limpiar y mostrar auth
+        logout();
+      });
+      
+      renderMenu();
+    } catch (error) {
+      console.error('Error initializing app:', error);
+      renderAuth();
+    }
+  } else {
+    renderAuth();
+  }
 });
 
 // Listener para redimensionar ventana
