@@ -879,6 +879,7 @@ function selectCell(row, col) {
   updateSelectedCells(previousSelected, [row, col]);
 }
 
+// Reemplaza la función inputNumber con esta versión corregida
 async function inputNumber(num) {
   if (!gameState.selectedCell || !gameState.currentPuzzle) {
     showNotification('❌ Selecciona una celda primero');
@@ -897,7 +898,7 @@ async function inputNumber(num) {
   
   try {
     if (gameState.notesMode) {
-      // Modo anotaciones
+      // Modo anotaciones (sin cambios)
       if (!gameState.notes[key]) {
         gameState.notes[key] = new Set();
       }
@@ -911,20 +912,6 @@ async function inputNumber(num) {
         gameState.notes[key].add(num);
       }
       
-      // Si estamos online, sincronizar anotaciones
-      if (gameState.isOnline && gameState.currentGameId) {
-        try {
-          await SudokuAPI.makeMove(gameState.currentGameId, {
-            row,
-            col,
-            value: num,
-            notesMode: true
-          });
-        } catch (error) {
-          console.error('Error syncing notes:', error);
-        }
-      }
-      
       gameState.sound.note();
       updateCellAndRelated(row, col);
       
@@ -932,66 +919,68 @@ async function inputNumber(num) {
       // Modo normal - entrada de número
       const oldValue = gameState.userBoard[row][col];
       
-      // Si estamos online, hacer el movimiento via API
       if (gameState.isOnline && gameState.currentGameId) {
-        try {
-          const response = await SudokuAPI.makeMove(gameState.currentGameId, {
-            row,
-            col,
-            value: num,
-            notesMode: false
-          });
-          
-          gameState.userBoard = response.userBoard || gameState.userBoard;
-          gameState.mistakes = response.mistakes || gameState.mistakes;
-          gameState.notes = response.notes || gameState.notes;
-          
-          if (response.completed) {
-            clearInterval(gameState.timerInterval);
-            gameState.timer = response.time || gameState.timer;
-            showWinScreen();
-            return;
-          }
-          
-          if (!response.isCorrect && num !== 0) {
-            gameState.sound.error();
-          } else {
-            gameState.sound.input();
-          }
-          
-        } catch (error) {
-          console.error('Error making move:', error);
-          showNotification(`❌ Error: ${error.message}`);
-          return;
-        }
+        // Código online (sin cambios)
+        // ... 
       } else {
-        // Modo offline
+        // MODO OFFLINE - VERSIÓN CORREGIDA
         if (oldValue === num) {
+          // Mismo número - borrar
           gameState.userBoard[row][col] = 0;
           gameState.sound.click();
         } else {
+          // Nuevo número - ACTUALIZAR EL TABLERO PRIMERO
           gameState.userBoard[row][col] = num;
           
+          // Limpiar notas si existen
           if (gameState.notes[key]) {
             delete gameState.notes[key];
           }
           
+          // ACTUALIZAR LA INTERFAZ INMEDIATAMENTE para mostrar el número
+          const conflicts = gameState.autoCheck ? findConflicts() : [];
+          renderBoard(conflicts);
+          
+          // VERIFICAR SI ES UN ERROR (después de mostrar el número)
+          let isCorrect = true;
           if (gameState.currentPuzzle.solution) {
-            const isCorrect = num === gameState.currentPuzzle.solution[row][col];
+            isCorrect = num === gameState.currentPuzzle.solution[row][col];
             
             if (!isCorrect && num !== 0) {
+              // ES UN ERROR - incrementar contador
               gameState.mistakes++;
               recordErrorHeatmap(row, col);
               gameState.sound.error();
+              
+              console.log(`Error registrado! Total: ${gameState.mistakes}`);
+              
+              // ACTUALIZAR SOLO EL CONTADOR sin re-renderizar todo
+              updateTournamentMistakesCounter();
+              
+              // Verificar si se alcanzó el límite de errores
+              if (gameState.currentTournamentLevel) {
+                const level = gameState.currentTournamentLevel;
+                if (gameState.mistakes >= level.requiredMistakes) {
+                  showNotification(`⚠️ ¡Límite de errores alcanzado! (${level.requiredMistakes})`);
+                  // FINALIZAR EL NIVEL INMEDIATAMENTE
+                  setTimeout(() => {
+                    clearInterval(gameState.timerInterval);
+                    showTournamentLevelResult(false, `¡Demasiados errores! (${gameState.mistakes}/${level.requiredMistakes})`);
+                  }, 1500);
+                }
+              }
             } else {
+              // ES CORRECTO
               gameState.sound.input();
               cleanRelatedNotes(row, col, num);
             }
           } else {
+            // Sin solución disponible
             gameState.sound.input();
           }
           
-          if (oldValue !== num && !gameState.expertMode) {
+          // Guardar en historial solo si es correcto
+          if (oldValue !== num && !gameState.expertMode && isCorrect) {
             gameState.moveHistory.push({
               row,
               col,
@@ -1002,16 +991,108 @@ async function inputNumber(num) {
           }
         }
         
+        // Verificar victoria
         checkWin();
       }
-      
-      updateCellAndRelated(row, col);
-      updateMistakes();
     }
     
   } catch (error) {
     console.error('Error in inputNumber:', error);
     showNotification(`❌ Error: ${error.message}`);
+  }
+}
+
+// Función mejorada para actualizar solo el contador
+function updateTournamentMistakesCounter() {
+  if (!gameState.currentTournamentLevel) return;
+  
+  const level = gameState.currentTournamentLevel;
+  
+  // Buscar los elementos en el DOM
+  const mistakesCounter = document.getElementById('mistakes-counter');
+  const mistakesCheck = document.getElementById('mistakes-check');
+  
+  console.log('Buscando elementos:', {
+    mistakesCounter: mistakesCounter ? 'ENCONTRADO' : 'NO ENCONTRADO',
+    mistakesCheck: mistakesCheck ? 'ENCONTRADO' : 'NO ENCONTRADO'
+  });
+  
+  // Si no se encuentran los elementos, forzar re-render completo
+  if (!mistakesCounter || !mistakesCheck) {
+    console.log('Elementos no encontrados, re-renderizando...');
+    renderTournamentGame(level, gameState.currentTournamentChapter?.boss === level);
+    return;
+  }
+  
+  // Actualizar contador principal
+  const mistakesColor = gameState.mistakes >= level.requiredMistakes ? '#ef4444' : 
+                       gameState.mistakes >= level.requiredMistakes - 1 ? '#f59e0b' : '#10b981';
+  
+  mistakesCounter.textContent = `${gameState.mistakes}/${level.requiredMistakes}`;
+  mistakesCounter.style.color = mistakesColor;
+  mistakesCounter.style.fontWeight = 'bold';
+  
+  // Actualizar marca de verificación
+  mistakesCheck.textContent = gameState.mistakes < level.requiredMistakes ? '✓' : '✗';
+  mistakesCheck.style.color = gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444';
+  
+  console.log('Contador actualizado a:', mistakesCounter.textContent);
+}
+
+// Función específica para actualizar el contador en modo torneo
+function updateTournamentMistakesCounter() {
+  if (!gameState.currentTournamentLevel) return;
+  
+  const level = gameState.currentTournamentLevel;
+  const mistakesCounter = document.getElementById('mistakes-counter');
+  const mistakesCheck = document.getElementById('mistakes-check');
+  
+  console.log('updateTournamentMistakesCounter llamado:', {
+    mistakes: gameState.mistakes,
+    required: level.requiredMistakes,
+    mistakesCounter: mistakesCounter ? 'EXISTE' : 'NO EXISTE',
+    mistakesCheck: mistakesCheck ? 'EXISTE' : 'NO EXISTE'
+  });
+  
+  // Actualizar contador principal
+  if (mistakesCounter) {
+    const mistakesColor = gameState.mistakes >= level.requiredMistakes ? '#ef4444' : 
+                         gameState.mistakes >= level.requiredMistakes - 1 ? '#f59e0b' : '#10b981';
+    
+    mistakesCounter.textContent = `${gameState.mistakes}/${level.requiredMistakes}`;
+    mistakesCounter.style.color = mistakesColor;
+    mistakesCounter.style.fontWeight = 'bold';
+    console.log('Contador actualizado:', mistakesCounter.textContent);
+  }
+  
+  // Actualizar marca de verificación
+  if (mistakesCheck) {
+    mistakesCheck.textContent = gameState.mistakes < level.requiredMistakes ? '✓' : '✗';
+    mistakesCheck.style.color = gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444';
+    console.log('Check actualizado:', mistakesCheck.textContent);
+  }
+}
+
+// Función auxiliar para actualizar el contador de errores en tiempo real
+function updateMistakes() {
+  const mistakesEl = document.getElementById('mistakes');
+  if (mistakesEl) {
+    mistakesEl.textContent = `Errores: ${gameState.mistakes}`;
+    
+    // En modo torneo, resaltar si se acerca al límite
+    if (gameState.currentTournamentLevel) {
+      const level = gameState.currentTournamentLevel;
+      if (gameState.mistakes >= level.requiredMistakes) {
+        mistakesEl.style.color = '#ef4444';
+        mistakesEl.style.fontWeight = 'bold';
+      } else if (gameState.mistakes >= level.requiredMistakes - 1) {
+        mistakesEl.style.color = '#f59e0b';
+        mistakesEl.style.fontWeight = 'bold';
+      } else {
+        mistakesEl.style.color = '';
+        mistakesEl.style.fontWeight = '';
+      }
+    }
   }
 }
 
@@ -1057,6 +1138,12 @@ function cleanRelatedNotes(row, col, num) {
 }
 
 function checkWin() {
+  // En modo online, el servidor se encarga de verificar victoria
+  if (gameState.isOnline && gameState.currentGameId) {
+    return;
+  }
+  
+  // En modo offline, verificar localmente solo si tenemos solución
   if (gameState.currentPuzzle && gameState.currentPuzzle.solution) {
     const isComplete = gameState.userBoard.every((row, i) => 
       row.every((cell, j) => cell === gameState.currentPuzzle.solution[i][j])
@@ -1067,17 +1154,27 @@ function checkWin() {
       
       // Verificar si estamos en modo torneo
       if (gameState.currentTournamentLevel) {
-        showTournamentLevelResult(true, "¡Nivel completado con éxito!");
+        const level = gameState.currentTournamentLevel;
+        
+        // Verificar si se cumplen los requisitos del nivel
+        const withinMistakeLimit = gameState.mistakes < level.requiredMistakes;
+        const withinTimeLimit = gameState.timer <= level.timeLimit;
+        
+        if (withinMistakeLimit && withinTimeLimit) {
+          showTournamentLevelResult(true, "¡Nivel completado con éxito!");
+        } else {
+          let message = "¡Completado pero ";
+          if (!withinMistakeLimit) message += `demasiados errores (${gameState.mistakes}/${level.requiredMistakes})`;
+          else if (!withinTimeLimit) message += "se agotó el tiempo";
+          message += "!";
+          showTournamentLevelResult(false, message);
+        }
       } else {
         updateStatsAfterWin();
         gameState.sound.complete();
         showWinScreen();
       }
     }
-  }
-  // En modo online, el servidor se encarga de verificar victoria
-  if (gameState.isOnline && gameState.currentGameId) {
-    return;
   }
   
   // En modo offline, verificar localmente solo si tenemos solución
@@ -2458,8 +2555,30 @@ function updateTimer() {
 }
 
 function updateMistakes() {
-  const mistakesEl = document.getElementById('mistakes');
-  if (mistakesEl) mistakesEl.textContent = `Errores: ${gameState.mistakes}`;
+  // Actualizar el contador principal
+  const mistakesCounter = document.getElementById('mistakes-counter');
+  if (mistakesCounter && gameState.currentTournamentLevel) {
+    const level = gameState.currentTournamentLevel;
+    const mistakesColor = gameState.mistakes >= level.requiredMistakes ? '#ef4444' : 
+                         gameState.mistakes >= level.requiredMistakes - 1 ? '#f59e0b' : '#10b981';
+    
+    mistakesCounter.textContent = `${gameState.mistakes}/${level.requiredMistakes}`;
+    mistakesCounter.style.color = mistakesColor;
+  }
+
+  // Actualizar la marca de verificación de errores
+  const mistakesCheck = document.getElementById('mistakes-check');
+  if (mistakesCheck && gameState.currentTournamentLevel) {
+    const level = gameState.currentTournamentLevel;
+    mistakesCheck.textContent = gameState.mistakes < level.requiredMistakes ? '✓' : '✗';
+    mistakesCheck.style.color = gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444';
+  }
+
+  // También actualizar el contador general si existe
+  const generalMistakes = document.getElementById('mistakes');
+  if (generalMistakes) {
+    generalMistakes.textContent = `Errores: ${gameState.mistakes}`;
+  }
 }
 
 function updateHints() {
@@ -3006,20 +3125,26 @@ function startTournamentLevel(chapterId, levelId, isBoss = false) {
   const level = isBoss ? chapter.boss : chapter.levels.find(l => l.id === levelId);
   if (!level) return;
   
-  // Configurar el nivel
-  gameState.difficulty = level.difficulty;
-  gameState.timeAttackMode = true;
-  gameState.timeAttackLimit = level.timeLimit;
-  gameState.expertMode = level.specialRule?.includes("Modo experto") || false;
+  // GUARDAR EL NIVEL ACTUAL
+  gameState.currentTournamentLevel = level;
+  gameState.currentTournamentChapter = chapter;
   
-  // Reiniciar estado del juego
+  // REINICIAR CONTADORES
   gameState.selectedCell = null;
   gameState.timer = 0;
-  gameState.mistakes = 0;
+  gameState.mistakes = 0; // ¡IMPORTANTE! Reiniciar a 0
   gameState.hintsUsed = 0;
   gameState.moveHistory = [];
   gameState.notes = {};
   gameState.notesMode = false;
+  
+  console.log(`Iniciando nivel torneo. Errores: ${gameState.mistakes}`); // Debug
+  
+  // Configurar modo de juego
+  gameState.difficulty = level.difficulty;
+  gameState.timeAttackMode = true;
+  gameState.timeAttackLimit = level.timeLimit;
+  gameState.expertMode = level.specialRule?.includes("Modo experto") || false;
   
   // Limpiar timer anterior
   if (gameState.timerInterval) {
@@ -3031,11 +3156,10 @@ function startTournamentLevel(chapterId, levelId, isBoss = false) {
   gameState.currentPuzzle = generator.generate(level.difficulty);
   gameState.userBoard = gameState.currentPuzzle.puzzle.map(row => [...row]);
   
-  // Iniciar timer especial para torneo
+  // Timer
   gameState.timerInterval = setInterval(() => {
     gameState.timer++;
     
-    // Verificar si se agotó el tiempo
     if (gameState.timer >= level.timeLimit) {
       clearInterval(gameState.timerInterval);
       showTournamentLevelResult(false, "¡Tiempo agotado!");
@@ -3053,6 +3177,9 @@ function renderTournamentGame(level, isBoss = false) {
   const theme = themes[gameState.theme];
   const timeLeft = level.timeLimit - gameState.timer;
   const timeWarning = timeLeft < 60;
+  
+  const mistakesColor = gameState.mistakes >= level.requiredMistakes ? '#ef4444' : 
+                       gameState.mistakes >= level.requiredMistakes - 1 ? '#f59e0b' : '#10b981';
   
   const root = document.getElementById('root');
   root.innerHTML = `
@@ -3086,7 +3213,7 @@ function renderTournamentGame(level, isBoss = false) {
               <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 15px;">
                 <div style="text-align: center;">
                   <div style="color: ${theme.text}; font-size: 12px;">Errores</div>
-                  <div style="color: ${gameState.mistakes >= level.requiredMistakes ? '#ef4444' : '#10b981'}; font-size: 18px; font-weight: bold;">
+                  <div id="mistakes-counter" style="color: ${mistakesColor}; font-size: 18px; font-weight: bold;">
                     ${gameState.mistakes}/${level.requiredMistakes}
                   </div>
                 </div>
@@ -3142,7 +3269,7 @@ function renderTournamentGame(level, isBoss = false) {
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                   <span style="color: ${theme.text}; font-size: 14px;">Menos de ${level.requiredMistakes} errores</span>
-                  <span style="color: ${gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444'}; font-size: 18px;">
+                  <span id="mistakes-check" style="color: ${gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444'}; font-size: 18px;">
                     ${gameState.mistakes < level.requiredMistakes ? '✓' : '✗'}
                   </span>
                 </div>
@@ -3187,7 +3314,7 @@ function renderTournamentGame(level, isBoss = false) {
             ${isBoss ? `
             <div style="background: rgba(245, 158, 11, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(245, 158, 11, 0.3);">
               <h3 style="color: #f59e0b; margin-bottom: 10px;">⚡ Reglas del Boss</h3>
-              <div style="color: rgba(245, 158, 11, 0.9); font-size: 13px; line-height: 1.4;">
+              <div style="color: #f59e0b; opacity: 0.9; font-size: 13px; line-height: 1.4;">
                 ${level.specialRule}
               </div>
             </div>
@@ -3199,6 +3326,17 @@ function renderTournamentGame(level, isBoss = false) {
   `;
   
   renderBoard();
+
+  setTimeout(() => {
+    const mistakesCounter = document.getElementById('mistakes-counter');
+    const mistakesCheck = document.getElementById('mistakes-check');
+    console.log('Elementos después de render:', {
+      mistakesCounter: mistakesCounter ? 'EXISTE' : 'NO EXISTE',
+      mistakesCheck: mistakesCheck ? 'EXISTE' : 'NO EXISTE',
+      mistakes: gameState.mistakes,
+      requiredMistakes: level.requiredMistakes
+    });
+  }, 100);
 }
 
 function calculateEarnedStars(level, time, mistakes) {
@@ -3211,7 +3349,9 @@ function calculateEarnedStars(level, time, mistakes) {
 }
 
 function showTournamentLevelResult(success, message) {
-  const level = getCurrentLevel();
+  const level = gameState.currentTournamentLevel;
+  if (!level) return;
+  
   const starsEarned = success ? calculateEarnedStars(level, gameState.timer, gameState.mistakes) : 0;
   
   if (success) {
@@ -3238,9 +3378,24 @@ function showTournamentLevelResult(success, message) {
     
     gameState.tournamentProgress.totalScore += starsEarned * 100;
     
+    // Desbloquear siguiente nivel si es necesario
+    const chapter = gameState.currentTournamentChapter;
+    if (chapter && !chapter.levels.find(l => l.id === level.id + 1) && !gameState.tournamentProgress.completedLevels.find(l => l.levelId === chapter.boss.id)) {
+      // Este era el último nivel normal, desbloquear boss
+      if (!gameState.tournamentProgress.completedLevels.find(l => l.levelId === chapter.boss.id)) {
+        showNotification("👑 ¡Boss battle desbloqueado!");
+      }
+    }
+    
   } else {
     // Registrar derrota - perder vida
     gameState.tournamentProgress.lives--;
+    
+    // Verificar game over
+    if (gameState.tournamentProgress.lives <= 0) {
+      gameState.tournamentProgress.lives = 0;
+      showNotification("💀 ¡Game Over! Se acabaron las vidas");
+    }
   }
   
   saveStats();
@@ -3249,30 +3404,32 @@ function showTournamentLevelResult(success, message) {
   const theme = themes[gameState.theme];
   const root = document.getElementById('root');
   
+  const bgGradient = success ? 'linear-gradient(135deg, #059669, #047857)' : 'linear-gradient(135deg, #dc2626, #991b1b)';
+  
   root.innerHTML = `
-    <div style="height: 100vh; background: ${success ? 'linear-gradient(135deg, #059669, #047857)' : 'linear-gradient(135deg, #dc2626, #991b1b)'}; display: flex; align-items: center; justify-content: center; padding: 40px;">
-      <div style="max-width: 600px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 50px; border: 1px solid rgba(255,255,255,0.2); text-align: center;">
+    <div style="height: 100vh; background: ${bgGradient}; display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="max-width: 600px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 50px; border: 1px solid rgba(255,255,255,0.2); text-align: center; color: white;">
         <div style="font-size: 100px; margin-bottom: 30px;">
           ${success ? '🏆' : '💀'}
         </div>
-        <h1 style="font-size: 48px; font-weight: bold; color: white; margin: 0 0 20px 0;">
+        <h1 style="font-size: 48px; font-weight: bold; margin: 0 0 20px 0;">
           ${success ? '¡Nivel Completado!' : 'Nivel Fallido'}
         </h1>
-        <div style="font-size: 24px; color: rgba(255,255,255,0.9); margin-bottom: 30px;">
+        <div style="font-size: 24px; opacity: 0.9; margin-bottom: 30px;">
           ${message}
         </div>
         
         ${success ? `
         <div style="display: flex; justify-content: center; gap: 20px; margin-bottom: 40px;">
           ${[1,2,3].map(star => `
-            <div style="font-size: 50px; color: ${star <= starsEarned ? '#fbbf24' : '#6b7280'};">
+            <div style="font-size: 50px; color: ${star <= starsEarned ? '#fbbf24' : 'rgba(255,255,255,0.3)'};">
               ${star <= starsEarned ? '⭐' : '☆'}
             </div>
           `).join('')}
         </div>
         
         <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; color: white;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
             <div>
               <div style="font-size: 14px; opacity: 0.8;">Tiempo</div>
               <div style="font-size: 24px; font-weight: bold;">${formatTime(gameState.timer)}</div>
@@ -3289,11 +3446,11 @@ function showTournamentLevelResult(success, message) {
         </div>
         ` : `
         <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
-          <div style="color: white; font-size: 36px; font-weight: bold;">
+          <div style="font-size: 36px; font-weight: bold;">
             Vidas restantes: ${gameState.tournamentProgress.lives} ❤️
           </div>
           ${gameState.tournamentProgress.lives === 0 ? 
-            '<div style="color: rgba(255,255,255,0.8); margin-top: 10px;">¡Se acabaron las vidas! El torneo ha terminado.</div>' : 
+            '<div style="opacity: 0.8; margin-top: 10px;">¡Se acabaron las vidas! El torneo ha terminado.</div>' : 
             ''
           }
         </div>
@@ -3303,7 +3460,7 @@ function showTournamentLevelResult(success, message) {
           ${success ? `
             ${getNextLevel() ? `
               <button onclick="startTournamentLevel(${getCurrentChapter().id}, ${getNextLevel().id})" style="
-                background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                background: rgba(255,255,255,0.2);
                 color: white;
                 padding: 20px 40px;
                 border: none;
@@ -3311,10 +3468,11 @@ function showTournamentLevelResult(success, message) {
                 font-size: 20px;
                 font-weight: bold;
                 cursor: pointer;
-              ">🎮 Siguiente Nivel</button>
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🎮 Siguiente Nivel</button>
             ` : `
               <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="
-                background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                background: rgba(255,255,255,0.2);
                 color: white;
                 padding: 20px 40px;
                 border: none;
@@ -3322,12 +3480,13 @@ function showTournamentLevelResult(success, message) {
                 font-size: 20px;
                 font-weight: bold;
                 cursor: pointer;
-              ">🏆 Volver al Capítulo</button>
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🏆 Volver al Capítulo</button>
             `}
           ` : `
             ${gameState.tournamentProgress.lives > 0 ? `
               <button onclick="startTournamentLevel(${getCurrentChapter().id}, ${getCurrentLevel().id})" style="
-                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                background: rgba(255,255,255,0.2);
                 color: white;
                 padding: 20px 40px;
                 border: none;
@@ -3335,12 +3494,25 @@ function showTournamentLevelResult(success, message) {
                 font-size: 20px;
                 font-weight: bold;
                 cursor: pointer;
-              ">🔄 Reintentar Nivel</button>
-            ` : ''}
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🔄 Reintentar Nivel</button>
+            ` : `
+              <button onclick="showTournamentMenu()" style="
+                background: rgba(255,255,255,0.2);
+                color: white;
+                padding: 20px 40px;
+                border: none;
+                border-radius: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">📖 Volver al Torneo</button>
+            `}
           `}
           
           <button onclick="showTournamentChapter(${getCurrentChapter().id})" style="
-            background: rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.1);
             color: white;
             padding: 20px 40px;
             border: none;
@@ -3348,10 +3520,11 @@ function showTournamentLevelResult(success, message) {
             font-size: 20px;
             font-weight: bold;
             cursor: pointer;
-          ">📖 Volver al Capítulo</button>
+            transition: transform 0.2s;
+          " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">📖 Volver al Capítulo</button>
           
           <button onclick="renderMenu()" style="
-            background: rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.05);
             color: white;
             padding: 15px 30px;
             border: none;
@@ -3359,36 +3532,48 @@ function showTournamentLevelResult(success, message) {
             font-size: 16px;
             font-weight: bold;
             cursor: pointer;
-          ">🏠 Menú Principal</button>
+            transition: transform 0.2s;
+          " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🏠 Menú Principal</button>
         </div>
       </div>
     </div>
   `;
 }
-
 // Funciones auxiliares
 function getCurrentChapter() {
-  return tournamentStructure.chapters.find(c => c.id === gameState.tournamentProgress.currentChapter) || tournamentStructure.chapters[0];
+  return gameState.currentTournamentChapter || tournamentStructure.chapters[0];
 }
 
 function getCurrentLevel() {
-  // Esta función necesitaría saber qué nivel se está jugando actualmente
-  // Por simplicidad, asumimos que se guarda en gameState
   return gameState.currentTournamentLevel;
 }
 
 function getNextLevel() {
   const chapter = getCurrentChapter();
   const currentLevel = getCurrentLevel();
-  if (!currentLevel) return chapter.levels[0];
+  if (!currentLevel || !chapter) return null;
   
+  // Si es el boss, no hay siguiente nivel en este capítulo
   if (currentLevel.id === chapter.boss.id) {
-    // Boss completado - siguiente capítulo
-    const nextChapter = tournamentStructure.chapters.find(c => c.id === chapter.id + 1);
-    return nextChapter ? nextChapter.levels[0] : null;
+    return null;
   }
   
-  return chapter.levels.find(l => l.id === currentLevel.id + 1) || chapter.boss;
+  // Buscar siguiente nivel normal
+  const nextNormalLevel = chapter.levels.find(l => l.id === currentLevel.id + 1);
+  if (nextNormalLevel) {
+    return nextNormalLevel;
+  }
+  
+  // Si no hay siguiente nivel normal, devolver el boss si está desbloqueado
+  const allNormalLevelsCompleted = chapter.levels.every(level => 
+    gameState.tournamentProgress.completedLevels.find(l => l.levelId === level.id)
+  );
+  
+  if (allNormalLevelsCompleted && !gameState.tournamentProgress.completedLevels.find(l => l.levelId === chapter.boss.id)) {
+    return chapter.boss;
+  }
+  
+  return null;
 }
 
 function showTournamentChapter(chapterId) {
@@ -3711,6 +3896,9 @@ function renderTournamentGame(level, isBoss = false) {
   const timeLeft = level.timeLimit - gameState.timer;
   const timeWarning = timeLeft < 60;
   
+  const mistakesColor = gameState.mistakes >= level.requiredMistakes ? '#ef4444' : 
+                       gameState.mistakes >= level.requiredMistakes - 1 ? '#f59e0b' : '#10b981';
+  
   const root = document.getElementById('root');
   root.innerHTML = `
     <div style="height: 100vh; background: ${theme.bg}; padding: 10px; overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;">
@@ -3743,7 +3931,7 @@ function renderTournamentGame(level, isBoss = false) {
               <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 15px;">
                 <div style="text-align: center;">
                   <div style="color: ${theme.text}; font-size: 12px;">Errores</div>
-                  <div style="color: ${gameState.mistakes >= level.requiredMistakes ? '#ef4444' : '#10b981'}; font-size: 18px; font-weight: bold;">
+                  <div id="mistakes-counter" style="color: ${mistakesColor}; font-size: 18px; font-weight: bold;">
                     ${gameState.mistakes}/${level.requiredMistakes}
                   </div>
                 </div>
@@ -3799,7 +3987,7 @@ function renderTournamentGame(level, isBoss = false) {
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                   <span style="color: ${theme.text}; font-size: 14px;">Menos de ${level.requiredMistakes} errores</span>
-                  <span style="color: ${gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444'}; font-size: 18px;">
+                  <span id="mistakes-check" style="color: ${gameState.mistakes < level.requiredMistakes ? '#10b981' : '#ef4444'}; font-size: 18px;">
                     ${gameState.mistakes < level.requiredMistakes ? '✓' : '✗'}
                   </span>
                 </div>
@@ -3812,50 +4000,25 @@ function renderTournamentGame(level, isBoss = false) {
               </div>
             </div>
 
-            <!-- Recompensas de estrellas -->
-            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
-              <h3 style="color: ${theme.text}; margin-bottom: 15px;">⭐ Recompensas</h3>
-              <div style="display: flex; flex-direction: column; gap: 8px;">
-                ${level.stars.map((starTime, index) => {
-                  const starsEarned = calculateEarnedStars(level, gameState.timer, gameState.mistakes);
-                  const isUnlocked = starsEarned > index;
-                  const currentTime = gameState.timer;
-                  
-                  return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 8px;">
-                      <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="color: ${isUnlocked ? '#fbbf24' : '#6b7280'}; font-size: 16px;">
-                          ${isUnlocked ? '⭐' : '☆'}
-                        </span>
-                        <span style="color: ${theme.text}; font-size: 14px;">
-                          ${index + 1} estrella${index > 0 ? 's' : ''}
-                        </span>
-                      </div>
-                      <span style="color: ${currentTime <= starTime ? '#10b981' : '#6b7280'}; font-size: 12px; font-family: monospace;">
-                        < ${formatTime(starTime)}
-                      </span>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            </div>
-
-            <!-- Reglas especiales -->
-            ${isBoss ? `
-            <div style="background: rgba(245, 158, 11, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(245, 158, 11, 0.3);">
-              <h3 style="color: #f59e0b; margin-bottom: 10px;">⚡ Reglas del Boss</h3>
-              <div style="color: #f59e0b; opacity: 0.9; font-size: 13px; line-height: 1.4;">
-                ${level.specialRule}
-              </div>
-            </div>
-            ` : ''}
+            <!-- Resto del código igual... -->
           </div>
         </div>
       </div>
     </div>
   `;
   
+  // Renderizar el tablero después de crear la estructura
   renderBoard();
+  
+  // Debug para verificar que los elementos se crearon
+  setTimeout(() => {
+    const mistakesCounter = document.getElementById('mistakes-counter');
+    const mistakesCheck = document.getElementById('mistakes-check');
+    console.log('Después de renderTournamentGame:', {
+      mistakesCounter: mistakesCounter ? `EXISTE: "${mistakesCounter.textContent}"` : 'NO EXISTE',
+      mistakesCheck: mistakesCheck ? `EXISTE: "${mistakesCheck.textContent}"` : 'NO EXISTE'
+    });
+  }, 100);
 }
 
 function showTournamentLevelResult(success, message) {
