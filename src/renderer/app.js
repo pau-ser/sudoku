@@ -1222,75 +1222,6 @@ function renderGame() {
               </div>
             </div>
 
-            <!-- Controles de Anotaciones -->
-            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
-                <h3 style="font-size: 18px; font-weight: bold; color: ${theme.text}; margin: 0;">📝 Anotaciones</h3>
-                <div style="color: ${theme.text}; font-size: 13px; opacity: 0.8;">${totalNotes} celdas con notas</div>
-              </div>
-              <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px;">
-                <button onclick="toggleNotesMode()" style="
-                  background: ${gameState.notesMode ? 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)' : 'rgba(139,92,246,0.3)'};
-                  color: white;
-                  padding: 12px;
-                  border: none;
-                  border-radius: 10px;
-                  font-size: 14px;
-                  font-weight: bold;
-                  cursor: pointer;
-                  transition: all 0.2s;
-                  border: ${gameState.notesMode ? '2px solid #a78bfa' : '2px solid transparent'};
-                " onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
-                  ${gameState.notesMode ? '✓ Modo Notas ON' : '○ Modo Normal'}
-                </button>
-                <button onclick="autoFillNotes()" style="
-                  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-                  color: white;
-                  padding: 12px;
-                  border: none;
-                  border-radius: 10px;
-                  font-size: 13px;
-                  font-weight: bold;
-                  cursor: pointer;
-                " onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
-                  ✨ Auto-llenar [A]
-                </button>
-                <button onclick="clearCellNotes()" style="
-                  background: rgba(239,68,68,0.7);
-                  color: white;
-                  padding: 12px;
-                  border: none;
-                  border-radius: 10px;
-                  font-size: 13px;
-                  font-weight: bold;
-                  cursor: pointer;
-                ">🗑️ Borrar celda</button>
-                <button onclick="clearCellNotes()" style="
-                  background: rgba(239,68,68,0.7);
-                  color: white;
-                  padding: 12px;
-                  border: none;
-                  border-radius: 10px;
-                  font-size: 13px;
-                  font-weight: bold;
-                  cursor: pointer;
-                ">🗑️ Borrar celda</button>
-                <button onclick="clearAllNotes()" style="
-                  background: rgba(239,68,68,0.5);
-                  color: white;
-                  padding: 12px;
-                  border: none;
-                  border-radius: 10px;
-                  font-size: 13px;
-                  font-weight: bold;
-                  cursor: pointer;
-                ">🗑️ Borrar todas</button>
-              </div>
-              <div style="background: rgba(139,92,246,0.1); padding: 12px; border-radius: 10px; color: ${theme.text}; font-size: 12px; line-height: 1.5;">
-                <strong>💡 Consejo:</strong> Usa el modo anotaciones para marcar candidatos posibles. Las notas se limpian automáticamente al ingresar un número correcto.
-              </div>
-            </div>
-
             <!-- Controles principales -->
             <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
               <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px;">
@@ -1342,8 +1273,56 @@ function renderGame() {
               ` : ''}
             </div>
             
+            <!-- Anotaciones -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
+              <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">📝 Anotaciones</h3>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <button onclick="toggleNotesMode()" style="
+                  background: ${gameState.notesMode ? 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)' : 'rgba(139,92,246,0.3)'};
+                  color: white;
+                  padding: 10px;
+                  border: none;
+                  border-radius: 8px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  width: 100%;
+                  border: ${gameState.notesMode ? '2px solid #a78bfa' : '2px solid transparent'};
+                ">${gameState.notesMode ? '✓ Modo ON' : '○ Modo OFF'}</button>
+                
+                ${!gameState.expertMode ? `
+                <button onclick="getHint()" style="
+                  background: rgba(234,179,8,0.8);
+                  color: white;
+                  padding: 10px;
+                  border: none;
+                  border-radius: 8px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  width: 100%;
+                ">💡 Pista (${gameState.hintsUsed})</button>
+                ` : ''}
+                
+                <button onclick="clearAllNotes()" style="
+                  background: rgba(239,68,68,0.6);
+                  color: white;
+                  padding: 10px;
+                  border: none;
+                  border-radius: 8px;
+                  font-size: 13px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  width: 100%;
+                ">🗑️ Limpiar notas</button>
+              </div>
+              <div style="background: rgba(139,92,246,0.1); padding: 10px; border-radius: 8px; color: ${theme.text}; font-size: 11px; line-height: 1.4; margin-top: 10px;">
+                <strong>Notas activas:</strong> ${Object.keys(gameState.notes).length} celdas
+              </div>
+            </div>
+                        
             <!-- Opciones -->
-            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px; border: 1px solid rgba(255,255,255,0.2);">
               <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">⚙️ Opciones</h3>
               <button onclick="toggleTheme()" style="
                 background: rgba(102, 126, 234, 0.2);
@@ -1369,17 +1348,7 @@ function renderGame() {
                 width: 100%;
               ">${gameState.sound.enabled ? '🔊' : '🔇'} ${gameState.sound.enabled ? 'Silenciar' : 'Activar'}</button>
             </div>
-
-            <!-- Técnicas -->
-            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
-              <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">🎯 Técnicas</h3>
-              <div style="color: ${theme.text}; font-size: 12px; line-height: 1.5; opacity: 0.9;">
-                <p style="margin: 0 0 8px 0;"><strong>Naked Single:</strong> Una celda con un solo candidato.</p>
-                <p style="margin: 0 0 8px 0;"><strong>Hidden Single:</strong> Número que solo cabe en una celda.</p>
-                <p style="margin: 0;"><strong>Eliminación:</strong> Descarta por fila, columna y cuadro.</p>
-              </div>
-            </div>
-
+            
             <!-- Atajos -->
             <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.2);">
               <h3 style="font-size: 16px; font-weight: bold; color: ${theme.text}; margin-bottom: 12px;">⌨️ Atajos</h3>
