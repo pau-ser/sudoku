@@ -1044,7 +1044,8 @@ function selectCell(row, col) {
   updateSelectedCells(previousSelected, [row, col]);
 }
 
-// Reemplaza la función inputNumber con esta versión corregida
+// Reemplazar la función inputNumber() completa en app.js
+
 async function inputNumber(num) {
   if (!gameState.selectedCell || !gameState.currentPuzzle) {
     showNotification('❌ Selecciona una celda primero');
@@ -1063,7 +1064,7 @@ async function inputNumber(num) {
   
   try {
     if (gameState.notesMode) {
-      // Modo anotaciones (sin cambios)
+      // MODO ANOTACIONES (sin cambios)
       if (!gameState.notes[key]) {
         gameState.notes[key] = new Set();
       }
@@ -1081,20 +1082,13 @@ async function inputNumber(num) {
       updateCellAndRelated(row, col);
       
     } else {
-      // Modo normal - entrada de número
+      // MODO NORMAL - ENTRADA DE NÚMERO
       const oldValue = gameState.userBoard[row][col];
       
       if (gameState.isOnline && gameState.currentGameId) {
-        // Código online (sin cambios)
-        // ... 
-      } else {
-        // MODO OFFLINE - VERSIÓN CORREGIDA
-        if (oldValue === num) {
-          // Mismo número - borrar
-          gameState.userBoard[row][col] = 0;
-          gameState.sound.click();
-        } else {
-          // Nuevo número - ACTUALIZAR EL TABLERO PRIMERO
+        // ========== MODO ONLINE ==========
+        try {
+          // Primero actualizamos el tablero localmente para feedback inmediato
           gameState.userBoard[row][col] = num;
           
           // Limpiar notas si existen
@@ -1102,49 +1096,150 @@ async function inputNumber(num) {
             delete gameState.notes[key];
           }
           
-          // ACTUALIZAR LA INTERFAZ INMEDIATAMENTE para mostrar el número
+          // Actualizar UI inmediatamente
           const conflicts = gameState.autoCheck ? findConflicts() : [];
           renderBoard(conflicts);
           
-          // VERIFICAR SI ES UN ERROR (después de mostrar el número)
+          // Enviar movimiento al servidor
+          const response = await SudokuAPI.makeMove(gameState.currentGameId, {
+            row,
+            col,
+            value: num,
+            notesMode: false
+          });
+          
+          // Actualizar estado con la respuesta del servidor
+          gameState.mistakes = response.mistakes || gameState.mistakes;
+          gameState.userBoard = response.userBoard || gameState.userBoard;
+          
+          // Sonido según si es correcto o no
+          if (!response.isCorrect && num !== 0) {
+            gameState.sound.error();
+            updateMistakes();
+            
+            // Verificar límite de errores en torneo
+            if (gameState.currentTournamentLevel) {
+              const level = gameState.currentTournamentLevel;
+              if (gameState.mistakes >= level.requiredMistakes) {
+                showNotification(`⚠️ ¡Límite de errores alcanzado! (${level.requiredMistakes})`);
+                setTimeout(() => {
+                  clearInterval(gameState.timerInterval);
+                  showTournamentLevelResult(false, `¡Demasiados errores! (${gameState.mistakes}/${level.requiredMistakes})`);
+                }, 1500);
+              }
+            }
+          } else if (num !== 0) {
+            gameState.sound.input();
+            cleanRelatedNotes(row, col, num);
+          } else {
+            gameState.sound.click();
+          }
+          
+          // Verificar victoria
+          if (response.completed) {
+            clearInterval(gameState.timerInterval);
+            gameState.timer = response.time || gameState.timer;
+            gameState.sound.complete();
+            
+            // Verificar si es Daily Challenge
+            if (response.mode === 'daily' || gameState.difficulty === 'hard') {
+              showDailyChallengeWinScreen();
+            } else {
+              showWinScreen();
+            }
+            return;
+          }
+          
+          // Re-renderizar con datos actualizados
+          const newConflicts = gameState.autoCheck ? findConflicts() : [];
+          renderBoard(newConflicts);
+          
+        } catch (apiError) {
+          console.error('Error enviando movimiento al servidor:', apiError);
+          
+          // Revertir cambio local si falla
+          gameState.userBoard[row][col] = oldValue;
+          renderBoard();
+          
+          showNotification('⚠️ Error de conexión, reintentando...');
+          
+          // Reintentar una vez
+          setTimeout(async () => {
+            try {
+              await SudokuAPI.makeMove(gameState.currentGameId, {
+                row,
+                col,
+                value: num,
+                notesMode: false
+              });
+              gameState.userBoard[row][col] = num;
+              renderBoard();
+            } catch (retryError) {
+              showNotification('❌ No se pudo enviar el movimiento');
+            }
+          }, 1000);
+        }
+        
+      } else {
+        // ========== MODO OFFLINE ==========
+        if (oldValue === num) {
+          // Mismo número - borrar
+          gameState.userBoard[row][col] = 0;
+          gameState.sound.click();
+        } else {
+          // Nuevo número - actualizar tablero primero
+          gameState.userBoard[row][col] = num;
+          
+          // Limpiar notas
+          if (gameState.notes[key]) {
+            delete gameState.notes[key];
+          }
+          
+          // Actualizar UI inmediatamente
+          const conflicts = gameState.autoCheck ? findConflicts() : [];
+          renderBoard(conflicts);
+          
+          // Verificar si es correcto (solo si tenemos solución)
           let isCorrect = true;
           if (gameState.currentPuzzle.solution) {
-            isCorrect = num === gameState.currentPuzzle.solution[row][col];
+            isCorrect = num === 0 || num === gameState.currentPuzzle.solution[row][col];
             
             if (!isCorrect && num !== 0) {
-              // ES UN ERROR - incrementar contador
+              // ES UN ERROR
               gameState.mistakes++;
               recordErrorHeatmap(row, col);
               gameState.sound.error();
               
-              console.log(`Error registrado! Total: ${gameState.mistakes}`);
+              updateMistakes();
               
-              // ACTUALIZAR SOLO EL CONTADOR sin re-renderizar todo
-              updateTournamentMistakesCounter();
-              
-              // Verificar si se alcanzó el límite de errores
+              // Verificar límite en torneo
               if (gameState.currentTournamentLevel) {
                 const level = gameState.currentTournamentLevel;
                 if (gameState.mistakes >= level.requiredMistakes) {
                   showNotification(`⚠️ ¡Límite de errores alcanzado! (${level.requiredMistakes})`);
-                  // FINALIZAR EL NIVEL INMEDIATAMENTE
                   setTimeout(() => {
                     clearInterval(gameState.timerInterval);
                     showTournamentLevelResult(false, `¡Demasiados errores! (${gameState.mistakes}/${level.requiredMistakes})`);
                   }, 1500);
                 }
               }
-            } else {
+            } else if (num !== 0) {
               // ES CORRECTO
               gameState.sound.input();
               cleanRelatedNotes(row, col, num);
+            } else {
+              gameState.sound.click();
             }
           } else {
-            // Sin solución disponible
-            gameState.sound.input();
+            // Sin solución, asumir correcto
+            if (num !== 0) {
+              gameState.sound.input();
+            } else {
+              gameState.sound.click();
+            }
           }
           
-          // Guardar en historial solo si es correcto
+          // Guardar en historial
           if (oldValue !== num && !gameState.expertMode && isCorrect) {
             gameState.moveHistory.push({
               row,
@@ -1156,7 +1251,7 @@ async function inputNumber(num) {
           }
         }
         
-        // Verificar victoria
+        // Verificar victoria (solo offline)
         checkWin();
       }
     }
