@@ -31,10 +31,10 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/games', require('./routes/games'));
 app.use('/api/leaderboard', require('./routes/leaderboard'));
 app.use('/api/daily-challenge', require('./routes/dailyChallenge'));
+app.use('/api/battle-royale', require('./routes/battleRoyale'));
+// Y después de crear io, añadir:
+//require('./socket/battleRoyale')(io);
 
-// Comentar temporalmente hasta que crees estos archivos
-// app.use('/api/tournament', require('./routes/tournament'));
-// app.use('/api/battle-royale', require('./routes/battleRoyale'));
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {

@@ -1,5 +1,3 @@
-
-// API Client
 class SudokuAPI {
   static baseURL = 'http://localhost:3000/api';
 
@@ -123,6 +121,52 @@ class SudokuAPI {
   static async getDailyStats() {
     return this.request('/daily-challenge/stats');
   }
+
+  // Battle Royale endpoints
+  static async createBattleRoyale(settings) {
+    return this.request('/battle-royale/create', {
+      method: 'POST',
+      body: settings
+    });
+  }
+
+  static async getBattleRoyaleRooms() {
+    return this.request('/battle-royale/rooms');
+  }
+
+  static async joinBattleRoyale(roomCode) {
+    return this.request(`/battle-royale/join/${roomCode}`, {
+      method: 'POST'
+    });
+  }
+
+  static async getBattleRoyale(id) {
+    return this.request(`/battle-royale/${id}`);
+  }
+
+  static async startBattleRoyale(id) {
+    return this.request(`/battle-royale/${id}/start`, {
+      method: 'POST'
+    });
+  }
+
+  static async makeBattleRoyaleMove(id, moveData) {
+    return this.request(`/battle-royale/${id}/move`, {
+      method: 'POST',
+      body: moveData
+    });
+  }
+
+  static async leaveBattleRoyale(id) {
+    return this.request(`/battle-royale/${id}/leave`, {
+      method: 'POST'
+    });
+  }
+
+  static async getBattleRoyaleHistory() {
+    return this.request('/battle-royale/history/me');
+  }
+
 }
 
 // Generador de Sudoku para modo offline
@@ -313,6 +357,20 @@ const gameState = {
   progressData: JSON.parse(localStorage.getItem('sudoku-progress') || '{"dates":[],"times":[],"accuracies":[]}'),
   customColors: JSON.parse(localStorage.getItem('sudoku-colors') || '{"given":"#f3f4f6","selected":"#93c5fd","user":"#ffffff","error":"#fecaca"}'),
   sound: new SoundSystem(),
+
+  // Battle Royale
+  battleRoyale: {
+    currentRoomId: null,
+    roomCode: null,
+    socket: null,
+    isHost: false,
+    players: [],
+    status: 'waiting', // waiting, starting, active, finished
+    eliminationTimer: null,
+    myProgress: 0,
+    isAlive: true,
+    countdown: null
+  },
 
   advancedStats: JSON.parse(localStorage.getItem('sudoku-advanced-stats') || `{
     "sessionHistory": [],
@@ -2111,6 +2169,19 @@ function renderMenu() {
                 transition: transform 0.2s;
               " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
                 🏆 Modo Torneo
+              </button>
+              <button onclick="showBattleRoyaleMenu()" style="
+                background: linear-gradient(135deg, #ec4899, #db2777);
+                color: white;
+                padding: 15px 20px;
+                border: none;
+                border-radius: 12px;
+                font-size: 15px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+              " onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">
+                ⚔️ Battle Royale
               </button>
               <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 10px; font-size: 13px; color: rgba(255,255,255,0.8); line-height: 1.4;">
                 <strong>Experto:</strong> Sin pistas ni deshacer
@@ -4881,6 +4952,1174 @@ function showDailyChallengeWinScreen() {
       </div>
     </div>
   `;
+}
+
+// BATTLE ROYALE FUNCTIONS
+
+// Conectar a Socket.io
+function connectBattleRoyaleSocket(battleRoyaleId) {
+  if (gameState.battleRoyale.socket) {
+    gameState.battleRoyale.socket.disconnect();
+  }
+  
+  gameState.battleRoyale.socket = io('http://localhost:3000/battle-royale', {
+    transports: ['websocket', 'polling']
+  });
+  
+  const socket = gameState.battleRoyale.socket;
+  
+  // Eventos del socket
+  socket.on('connect', () => {
+    console.log('🎮 Conectado a Battle Royale Socket');
+    
+    // Unirse a la sala
+    socket.emit('join-room', {
+      battleRoyaleId: battleRoyaleId,
+      userId: gameState.user.id
+    });
+  });
+  
+  socket.on('room-state', (data) => {
+    console.log('📊 Estado de la sala:', data);
+    gameState.battleRoyale.status = data.status;
+    gameState.battleRoyale.players = data.players;
+    updateBattleRoyaleLobby();
+  });
+  
+  socket.on('player-joined', (data) => {
+    console.log('👤 Jugador se unió:', data.username);
+    showNotification(`${data.username} se unió a la sala`);
+    
+    // Actualizar contador de jugadores
+    const playerCount = document.getElementById('br-player-count');
+    if (playerCount) {
+      playerCount.textContent = `${data.totalPlayers}`;
+    }
+  });
+  
+  socket.on('countdown', (count) => {
+    gameState.battleRoyale.countdown = count;
+    updateCountdownDisplay(count);
+  });
+  
+  socket.on('game-started', () => {
+    console.log('🎮 ¡Battle Royale iniciado!');
+    gameState.battleRoyale.status = 'active';
+    showNotification('🎮 ¡Battle Royale comenzó!');
+    renderBattleRoyaleGame();
+  });
+  
+  socket.on('leaderboard-update', (data) => {
+    gameState.battleRoyale.players = data.players;
+    updateBattleRoyaleLeaderboard();
+  });
+  
+  socket.on('players-eliminated', (data) => {
+    console.log('💀 Jugadores eliminados:', data.eliminated);
+    
+    // Verificar si yo fui eliminado
+    const wasIEliminated = data.eliminated.some(
+      p => p.username === gameState.user.username
+    );
+    
+    if (wasIEliminated) {
+      gameState.battleRoyale.isAlive = false;
+      showNotification('💀 Has sido eliminado');
+      showBattleRoyaleEliminatedScreen(data.playersRemaining);
+    } else {
+      showNotification(`💀 ${data.eliminated.length} jugador(es) eliminado(s). Quedan ${data.playersRemaining}`);
+    }
+  });
+  
+  socket.on('game-finished', (data) => {
+    console.log('🏆 Battle Royale terminado:', data.winner);
+    gameState.battleRoyale.status = 'finished';
+    clearInterval(gameState.timerInterval);
+    
+    const isWinner = data.winner.userId === gameState.user.id;
+    showBattleRoyaleResultScreen(isWinner, data.winner);
+  });
+  
+  socket.on('error', (error) => {
+    console.error('❌ Socket error:', error);
+    showNotification(`❌ ${error.message}`);
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('❌ Desconectado de Battle Royale Socket');
+  });
+}
+
+// Menú principal de Battle Royale
+async function showBattleRoyaleMenu() {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
+      <div style="max-width: 1200px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+          <button onclick="renderMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer;">← Volver</button>
+          <h1 style="color: ${theme.text}; margin: 0;">⚔️ Battle Royale</h1>
+          <div style="width: 100px;"></div>
+        </div>
+        
+        <!-- Descripción -->
+        <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 20px; margin-bottom: 30px; text-align: center;">
+          <div style="font-size: 48px; margin-bottom: 15px;">⚔️</div>
+          <h2 style="color: ${theme.text}; margin-bottom: 15px;">¡Sobrevive hasta el final!</h2>
+          <p style="color: ${theme.text}; opacity: 0.8; font-size: 16px; line-height: 1.6;">
+            Compite contra otros jugadores en tiempo real. Cada 60 segundos, los jugadores con menor progreso son eliminados. ¡Sé el último en pie!
+          </p>
+        </div>
+        
+        <!-- Acciones -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+          <button onclick="showCreateBattleRoyaleDialog()" style="
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            padding: 30px;
+            border: none;
+            border-radius: 20px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+          " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+            <div style="font-size: 48px; margin-bottom: 10px;">🎮</div>
+            Crear Sala
+          </button>
+          
+          <button onclick="showBattleRoyaleRooms()" style="
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+            padding: 30px;
+            border: none;
+            border-radius: 20px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+          " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+            <div style="font-size: 48px; margin-bottom: 10px;">🚪</div>
+            Unirse a Sala
+          </button>
+        </div>
+        
+        <!-- Historial -->
+        <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 20px;">
+          <h2 style="color: ${theme.text}; margin-bottom: 20px;">📜 Tu Historial</h2>
+          <div id="br-history-container">
+            <div style="text-align: center; color: ${theme.text}; opacity: 0.6; padding: 40px;">
+              Cargando historial...
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Cargar historial
+  loadBattleRoyaleHistory();
+}
+
+// Cargar historial
+async function loadBattleRoyaleHistory() {
+  try {
+    const historyData = await SudokuAPI.getBattleRoyaleHistory();
+    const theme = themes[gameState.theme];
+    const container = document.getElementById('br-history-container');
+    
+    if (!container) return;
+    
+    if (historyData.history.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; color: ${theme.text}; opacity: 0.6; padding: 40px;">
+          No has jugado Battle Royale aún
+        </div>
+      `;
+      return;
+    }
+    
+    container.innerHTML = `
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        ${historyData.history.map((entry, idx) => `
+          <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 20px;">
+              <div style="font-size: 36px;">
+                ${entry.position === 1 ? '🏆' : entry.position <= 3 ? '🥈' : entry.position <= 5 ? '🥉' : '💀'}
+              </div>
+              <div style="color: ${theme.text};">
+                <div style="font-weight: bold; font-size: 16px;">#${entry.position} de ${entry.totalPlayers}</div>
+                <div style="font-size: 12px; opacity: 0.8;">${new Date(entry.date).toLocaleDateString()}</div>
+              </div>
+            </div>
+            <div style="text-align: right; color: ${theme.text};">
+              <div style="font-size: 18px; font-weight: bold;">${entry.progress}% completado</div>
+              <div style="font-size: 12px; opacity: 0.8;">❌ ${entry.mistakes} errores</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+  } catch (error) {
+    console.error('Error loading battle royale history:', error);
+    const container = document.getElementById('br-history-container');
+    if (container) {
+      container.innerHTML = `
+        <div style="text-align: center; color: #ef4444; padding: 40px;">
+          Error al cargar historial
+        </div>
+      `;
+    }
+  }
+}
+
+// Mostrar diálogo para crear sala
+function showCreateBattleRoyaleDialog() {
+  const theme = themes[gameState.theme];
+  
+  const dialog = document.createElement('div');
+  dialog.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  `;
+  
+  dialog.innerHTML = `
+    <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); padding: 40px; border-radius: 20px; max-width: 500px; width: 90%;">
+      <h2 style="color: ${theme.text}; margin-bottom: 20px;">🎮 Crear Sala</h2>
+      
+      <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px;">
+        <div>
+          <label style="color: ${theme.text}; font-size: 14px; margin-bottom: 5px; display: block;">Jugadores Máximos</label>
+          <input type="number" id="br-max-players" min="2" max="50" value="20" style="
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            background: rgba(255,255,255,0.1);
+            color: ${theme.text};
+          ">
+        </div>
+        
+        <div>
+          <label style="color: ${theme.text}; font-size: 14px; margin-bottom: 5px; display: block;">Jugadores Mínimos</label>
+          <input type="number" id="br-min-players" min="2" max="10" value="2" style="
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            background: rgba(255,255,255,0.1);
+            color: ${theme.text};
+          ">
+        </div>
+      </div>
+      
+      <div style="display: flex; gap: 10px;">
+        <button onclick="this.closest('div[style*=fixed]').remove()" style="
+          flex: 1;
+          background: rgba(255,255,255,0.1);
+          color: ${theme.text};
+          padding: 15px;
+          border: none;
+          border-radius: 10px;
+          font-size: 16px;
+          font-weight: bold;
+          cursor: pointer;
+        ">Cancelar</button>
+        
+        <button onclick="createBattleRoyaleRoom()" style="
+          flex: 1;
+          background: linear-gradient(135deg, #ef4444, #dc2626);
+          color: white;
+          padding: 15px;
+          border: none;
+          border-radius: 10px;
+          font-size: 16px;
+          font-weight: bold;
+          cursor: pointer;
+        ">Crear</button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(dialog);
+}
+
+// Crear sala de Battle Royale
+async function createBattleRoyaleRoom() {
+  try {
+    const maxPlayers = parseInt(document.getElementById('br-max-players').value);
+    const minPlayers = parseInt(document.getElementById('br-min-players').value);
+    
+    if (minPlayers > maxPlayers) {
+      showNotification('❌ Los jugadores mínimos no pueden ser más que los máximos');
+      return;
+    }
+    
+    showNotification('🎮 Creando sala...');
+    
+    const response = await SudokuAPI.createBattleRoyale({
+      maxPlayers,
+      minPlayers,
+      difficulty: 'hard'
+    });
+    
+    gameState.battleRoyale.currentRoomId = response.battleRoyaleId;
+    gameState.battleRoyale.roomCode = response.roomCode;
+    gameState.battleRoyale.isHost = true;
+    
+    // Cerrar diálogo
+    document.querySelectorAll('div[style*="position: fixed"]').forEach(el => el.remove());
+    
+    showNotification(`✅ Sala creada: ${response.roomCode}`);
+    
+    // Conectar socket y mostrar lobby
+    connectBattleRoyaleSocket(response.battleRoyaleId);
+    showBattleRoyaleLobby(response.battleRoyaleId);
+    
+  } catch (error) {
+    console.error('Error creating battle royale:', error);
+    showNotification(`❌ Error: ${error.message}`);
+  }
+}
+
+// Mostrar salas disponibles
+async function showBattleRoyaleRooms() {
+  try {
+    const roomsData = await SudokuAPI.getBattleRoyaleRooms();
+    const theme = themes[gameState.theme];
+    const root = document.getElementById('root');
+    
+    root.innerHTML = `
+      <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
+        <div style="max-width: 1000px; margin: 0 auto;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <button onclick="showBattleRoyaleMenu()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer;">← Volver</button>
+            <h1 style="color: ${theme.text}; margin: 0;">🚪 Salas Disponibles</h1>
+            <button onclick="showBattleRoyaleRooms()" style="background: rgba(255,255,255,0.2); color: ${theme.text}; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer;">🔄 Actualizar</button>
+          </div>
+          
+          ${roomsData.rooms.length === 0 ? `
+            <div style="background: ${theme.cardBg}; padding: 60px; border-radius: 20px; text-align: center;">
+              <div style="font-size: 64px; margin-bottom: 20px;">🚫</div>
+              <div style="color: ${theme.text}; font-size: 20px; margin-bottom: 10px;">No hay salas disponibles</div>
+              <div style="color: ${theme.text}; opacity: 0.6; margin-bottom: 30px;">Sé el primero en crear una</div>
+              <button onclick="showBattleRoyaleMenu()" style="
+                background: linear-gradient(135deg, #ef4444, #dc2626);
+                color: white;
+                padding: 15px 30px;
+                border: none;
+                border-radius: 12px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+              ">Crear Sala</button>
+            </div>
+          ` : `
+            <div style="display: grid; gap: 15px;">
+              ${roomsData.rooms.map(room => `
+                <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 15px; display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <div style="color: ${theme.text}; font-size: 24px; font-weight: bold; margin-bottom: 5px;">
+                      🎮 ${room.roomCode}
+                    </div>
+                    <div style="color: ${theme.text}; opacity: 0.8; font-size: 14px;">
+                      ${room.players}/${room.maxPlayers} jugadores • ${room.status === 'waiting' ? '⏳ Esperando' : '🎮 Comenzando'}
+                    </div>
+                  </div>
+                  <button onclick="joinBattleRoyaleRoom('${room.roomCode}')" ${room.isFull ? 'disabled' : ''} style="
+                    background: ${room.isFull ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #8b5cf6, #7c3aed)'};
+                    color: white;
+                    padding: 15px 30px;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: bold;
+                    cursor: ${room.isFull ? 'not-allowed' : 'pointer'};
+                  ">${room.isFull ? 'Llena' : 'Unirse'}</button>
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+    
+  } catch (error) {
+    console.error('Error loading rooms:', error);
+    showNotification('❌ Error al cargar salas');
+  }
+}
+
+// Unirse a sala
+async function joinBattleRoyaleRoom(roomCode) {
+  try {
+    showNotification('🚪 Uniéndose a la sala...');
+    
+    const response = await SudokuAPI.joinBattleRoyale(roomCode);
+    
+    gameState.battleRoyale.currentRoomId = response.battleRoyaleId;
+    gameState.battleRoyale.roomCode = response.roomCode;
+    gameState.battleRoyale.isHost = false;
+    
+    showNotification(`✅ Te uniste a la sala: ${roomCode}`);
+    
+    // Conectar socket y mostrar lobby
+    connectBattleRoyaleSocket(response.battleRoyaleId);
+    showBattleRoyaleLobby(response.battleRoyaleId);
+    
+  } catch (error) {
+    console.error('Error joining battle royale:', error);
+    showNotification(`❌ Error: ${error.message}`);
+  }
+}
+
+// Mostrar lobby de espera
+async function showBattleRoyaleLobby(battleRoyaleId) {
+  try {
+    const brData = await SudokuAPI.getBattleRoyale(battleRoyaleId);
+    const theme = themes[gameState.theme];
+    const root = document.getElementById('root');
+    
+    gameState.battleRoyale.isHost = brData.isHost;
+    gameState.battleRoyale.players = brData.players;
+    
+    root.innerHTML = `
+      <div style="height: 100vh; background: ${theme.bg}; padding: 20px; overflow-y: auto;">
+        <div style="max-width: 1200px; margin: 0 auto;">
+          <!-- Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <button onclick="leaveBattleRoyale()" style="background: rgba(239,68,68,0.8); color: white; border: none; padding: 12px 20px; border-radius: 10px; cursor: pointer;">← Salir</button>
+            <div style="text-align: center;">
+              <h1 style="color: ${theme.text}; margin: 0;">⚔️ Battle Royale</h1>
+              <div style="color: ${theme.text}; opacity: 0.8; font-size: 18px; margin-top: 5px;">Sala: ${brData.roomCode}</div>
+            </div>
+            <div style="width: 100px;"></div>
+          </div>
+          
+          <!-- Contador de jugadores -->
+          <div style="background: ${theme.cardBg}; padding: 30px; border-radius: 20px; margin-bottom: 30px; text-align: center;">
+            <div style="font-size: 72px; font-weight: bold; color: ${theme.text}; margin-bottom: 10px;">
+              <span id="br-player-count">${brData.players.length}</span>/${brData.settings.maxPlayers}
+            </div>
+            <div style="color: ${theme.text}; opacity: 0.8; font-size: 18px;">Jugadores en la sala</div>
+            ${brData.players.length < brData.settings.minPlayers ? `
+              <div style="color: #f59e0b; margin-top: 15px; font-size: 16px;">
+                ⚠️ Se necesitan al menos ${brData.settings.minPlayers} jugadores para comenzar
+              </div>
+            ` : ''}
+          </div>
+          
+          <!-- Lista de jugadores -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+            <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 20px;">
+              <h2 style="color: ${theme.text}; margin-bottom: 20px;">👥 Jugadores (${brData.players.length})</h2>
+              <div id="br-players-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto;">
+                ${brData.players.map((player, idx) => `
+                  <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; display: flex; align-items: center; gap: 15px;">
+                    <div style="font-size: 32px;">${player.avatar}</div>
+                    <div style="flex: 1;">
+                      <div style="color: ${theme.text}; font-weight: bold; font-size: 16px;">
+                        ${player.username} ${player.userId === gameState.user.id ? '(Tú)' : ''}
+                        ${brData.hostId === player.userId ? '👑' : ''}
+                      </div>
+                      <div style="color: ${theme.text}; opacity: 0.7; font-size: 12px;">Nivel ${player.level}</div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+            
+            <!-- Reglas -->
+            <div style="background: ${theme.cardBg}; padding: 25px; border-radius: 20px;">
+              <h2 style="color: ${theme.text}; margin-bottom: 20px;">📜 Reglas</h2>
+              <div style="color: ${theme.text}; font-size: 14px; line-height: 2;">
+                <div>⚔️ Todos resuelven el mismo sudoku</div>
+                <div>⏱️ Cada ${brData.settings.eliminationInterval}s se eliminan jugadores</div>
+                <div>📊 Los que tengan menos progreso son eliminados</div>
+                <div>💀 Aproximadamente ${Math.round(brData.settings.eliminationPercentage * 100)}% eliminados por ronda</div>
+                <div>🏆 El último en pie gana</div>
+                <div>❌ Los errores NO eliminan, pero ralentizan</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Botón de inicio (solo host) -->
+          ${brData.isHost ? `
+            <div style="text-align: center;">
+              <button 
+                onclick="startBattleRoyale()" 
+                ${brData.players.length < brData.settings.minPlayers ? 'disabled' : ''}
+                style="
+                  background: ${brData.players.length < brData.settings.minPlayers ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #ef4444, #dc2626)'};
+                  color: white;
+                  padding: 25px 60px;
+                  border: none;
+                  border-radius: 15px;
+                  font-size: 24px;
+                  font-weight: bold;
+                  cursor: ${brData.players.length < brData.settings.minPlayers ? 'not-allowed' : 'pointer'};
+                  transition: transform 0.2s;
+                "
+                ${brData.players.length >= brData.settings.minPlayers ? `onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'"` : ''}
+              >
+                🎮 Iniciar Battle Royale
+              </button>
+              <div style="color: ${theme.text}; opacity: 0.6; margin-top: 15px; font-size: 14px;">
+                Solo el host puede iniciar la partida
+              </div>
+            </div>
+          ` : `
+            <div style="background: rgba(139,92,246,0.2); padding: 25px; border-radius: 15px; text-align: center;">
+              <div style="color: ${theme.text}; font-size: 18px;">
+                ⏳ Esperando a que el host inicie la partida...
+              </div>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+    
+  } catch (error) {
+    console.error('Error showing lobby:', error);
+    showNotification('❌ Error al cargar lobby');
+  }
+}
+
+// Actualizar lobby cuando cambia algo
+function updateBattleRoyaleLobby() {
+  const playersList = document.getElementById('br-players-list');
+  const playerCount = document.getElementById('br-player-count');
+  
+  if (playersList && gameState.battleRoyale.players) {
+    const theme = themes[gameState.theme];
+    playersList.innerHTML = gameState.battleRoyale.players.map((player, idx) => `
+      <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; display: flex; align-items: center; gap: 15px;">
+        <div style="font-size: 32px;">${player.avatar}</div>
+        <div style="flex: 1;">
+          <div style="color: ${theme.text}; font-weight: bold; font-size: 16px;">
+            ${player.username} ${player.username === gameState.user.username ? '(Tú)' : ''}
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+  
+  if (playerCount) {
+    playerCount.textContent = gameState.battleRoyale.players.length;
+  }
+}
+
+// Actualizar cuenta regresiva
+function updateCountdownDisplay(count) {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  if (count > 0) {
+    root.innerHTML = `
+      <div style="height: 100vh; background: linear-gradient(135deg, #ef4444, #dc2626); display: flex; align-items: center; justify-content: center;">
+        <div style="text-align: center;">
+          <div style="font-size: 200px; font-weight: bold; color: white; animation: pulse 1s;">${count}</div>
+          <div style="font-size: 36px; color: white; opacity: 0.9;">Preparándose...</div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// Iniciar Battle Royale (solo host)
+async function startBattleRoyale() {
+  try {
+    showNotification('🎮 Iniciando Battle Royale...');
+    
+    await SudokuAPI.startBattleRoyale(gameState.battleRoyale.currentRoomId);
+    
+    // Emitir evento para iniciar cuenta regresiva
+    if (gameState.battleRoyale.socket) {
+      gameState.battleRoyale.socket.emit('start-countdown', gameState.battleRoyale.currentRoomId);
+    }
+    
+  } catch (error) {
+    console.error('Error starting battle royale:', error);
+    showNotification(`❌ Error: ${error.message}`);
+  }
+}
+
+// Salir de Battle Royale
+async function leaveBattleRoyale() {
+  try {
+    if (confirm('¿Seguro que quieres salir de la sala?')) {
+      await SudokuAPI.leaveBattleRoyale(gameState.battleRoyale.currentRoomId);
+      
+      if (gameState.battleRoyale.socket) {
+        gameState.battleRoyale.socket.disconnect();
+        gameState.battleRoyale.socket = null;
+      }
+      
+      gameState.battleRoyale.currentRoomId = null;
+      gameState.battleRoyale.roomCode = null;
+      gameState.battleRoyale.isHost = false;
+      
+      showNotification('👋 Saliste de la sala');
+      showBattleRoyaleMenu();
+    }
+  } catch (error) {
+    console.error('Error leaving battle royale:', error);
+    showNotification(`❌ Error: ${error.message}`);
+  }
+}
+
+// Renderizar juego de Battle Royale
+async function renderBattleRoyaleGame() {
+  try {
+    const brData = await SudokuAPI.getBattleRoyale(gameState.battleRoyale.currentRoomId);
+    
+    gameState.currentPuzzle = {
+      puzzle: brData.puzzle,
+      solution: null, // No enviamos solución al cliente
+      clues: brData.puzzle.flat().filter(c => c !== 0).length
+    };
+    
+    gameState.userBoard = brData.myBoard;
+    gameState.currentGameId = null; // No es un juego normal
+    gameState.difficulty = brData.difficulty;
+    gameState.selectedCell = null;
+    gameState.timer = 0;
+    gameState.mistakes = 0;
+    gameState.hintsUsed = 0;
+    gameState.moveHistory = [];
+    gameState.notes = {};
+    gameState.notesMode = false;
+    gameState.battleRoyale.isAlive = true;
+    gameState.battleRoyale.myProgress = 0;
+    
+    // Iniciar timer
+    if (gameState.timerInterval) clearInterval(gameState.timerInterval);
+    gameState.timerInterval = setInterval(() => {
+      gameState.timer++;
+      updateTimer();
+    }, 1000);
+    
+    const theme = themes[gameState.theme];
+    const root = document.getElementById('root');
+    
+    root.innerHTML = `
+      <div style="height: 100vh; background: ${theme.bg}; padding: 10px; overflow: hidden; display: flex; flex-direction: column;">
+        <div style="max-width: 1600px; margin: 0 auto; width: 100%; flex: 1; display: grid; grid-template-columns: 300px 1fr 300px; gap: 15px;">
+          
+          <!-- Columna izquierda: Leaderboard en vivo -->
+          <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px; overflow-y: auto;">
+            <h3 style="color: ${theme.text}; margin-bottom: 15px;">🏆 Ranking en Vivo</h3>
+            <div id="br-live-leaderboard">
+              ${brData.players
+                .filter(p => p.alive)
+                .sort((a, b) => b.progress - a.progress)
+                .map((player, idx) => `
+                  <div style="
+                    background: ${player.userId === gameState.user.id ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.05)'}; 
+                    padding: 12px; 
+                    border-radius: 10px; 
+                    margin-bottom: 8px;
+                    ${player.userId === gameState.user.id ? 'border: 2px solid #f59e0b;' : ''}
+                  ">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                      <div style="font-weight: bold; color: ${idx < 3 ? '#fbbf24' : theme.text}; min-width: 25px;">
+                        #${idx + 1}
+                      </div>
+                      <div style="font-size: 20px;">${player.avatar}</div>
+                      <div style="flex: 1; min-width: 0;">
+                        <div style="color: ${theme.text}; font-size: 14px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                          ${player.username}
+                        </div>
+                        <div style="color: ${theme.text}; opacity: 0.7; font-size: 12px;">
+                          ${player.progress}% • ❌${player.mistakes}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                `).join('')}
+            </div>
+            
+            <!-- Eliminados -->
+            ${brData.players.filter(p => p.eliminated).length > 0 ? `
+              <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <h4 style="color: ${theme.text}; opacity: 0.6; margin-bottom: 10px; font-size: 14px;">💀 Eliminados</h4>
+                ${brData.players
+                  .filter(p => p.eliminated)
+                  .map(player => `
+                    <div style="padding: 8px; opacity: 0.5; color: ${theme.text}; font-size: 12px;">
+                      ${player.username} - ${player.progress}%
+                    </div>
+                  `).join('')}
+              </div>
+            ` : ''}
+          </div>
+          
+          <!-- Columna central: Tablero -->
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            <!-- Header del juego -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="color: ${theme.text};">
+                  <div style="font-size: 18px; font-weight: bold;">⚔️ BATTLE ROYALE</div>
+                  <div style="font-size: 12px; opacity: 0.8;">${brData.roomCode}</div>
+                </div>
+                <div style="text-align: center; color: ${theme.text};">
+                  <div id="timer" style="font-size: 36px; font-weight: bold;">${formatTime(gameState.timer)}</div>
+                  <div style="font-size: 12px; opacity: 0.8;">Tu progreso: <span id="my-progress">0</span>%</div>
+                </div>
+                <div style="text-align: right; color: ${theme.text};">
+                  <div style="font-size: 24px; font-weight: bold;">${brData.players.filter(p => p.alive).length}</div>
+                  <div style="font-size: 12px; opacity: 0.8;">Vivos</div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Tablero -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 12px; flex: 1; display: flex; justify-content: center; align-items: center;">
+              <div id="board"></div>
+            </div>
+            
+            <!-- Controles -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px;">
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;">
+                ${[1,2,3,4,5,6,7,8,9].map(num => `
+                  <button onclick="inputBattleRoyaleNumber(${num})" style="
+                    background: rgba(102, 126, 234, 0.8); 
+                    color: white; 
+                    padding: 16px; 
+                    border: none; 
+                    border-radius: 10px; 
+                    font-size: 20px; 
+                    font-weight: bold; 
+                    cursor: pointer; 
+                  ">${num}</button>
+                `).join('')}
+                <button onclick="inputBattleRoyaleNumber(0)" style="background: rgba(239,68,68,0.8); color: white; padding: 16px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer;">✕</button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Columna derecha: Info -->
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            <!-- Tu estado -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 20px;">
+              <h3 style="color: ${theme.text}; margin-bottom: 15px;">📊 Tu Estado</h3>
+              <div style="background: rgba(139,92,246,0.2); padding: 15px; border-radius: 10px; margin-bottom: 10px;">
+                <div style="color: ${theme.text}; font-size: 12px; margin-bottom: 5px;">Progreso</div>
+                <div style="color: ${theme.text}; font-size: 32px; font-weight: bold;">
+                  <span id="my-progress-2">0</span>%
+                </div>
+              </div>
+              <div style="background: rgba(239,68,68,0.2); padding: 15px; border-radius: 10px;">
+                <div style="color: ${theme.text}; font-size: 12px; margin-bottom: 5px;">Errores</div>
+                <div id="br-mistakes" style="color: ${theme.text}; font-size: 32px; font-weight: bold;">${gameState.mistakes}</div>
+              </div>
+            </div>
+            
+            <!-- Próxima eliminación -->
+            <div style="background: rgba(239,68,68,0.2); backdrop-filter: blur(20px); border-radius: 20px; padding: 20px;">
+              <h3 style="color: #ef4444; margin-bottom: 15px;">⚠️ Próxima Eliminación</h3>
+              <div id="elimination-timer" style="font-size: 48px; font-weight: bold; color: #ef4444; text-align: center;">
+                --:--
+              </div>
+              <div style="color: #ef4444; text-align: center; opacity: 0.8; font-size: 12px; margin-top: 10px;">
+                Los más lentos serán eliminados
+              </div>
+            </div>
+            
+            <!-- Opciones -->
+            <div style="background: ${theme.cardBg}; backdrop-filter: blur(20px); border-radius: 20px; padding: 15px;">
+              <button onclick="toggleNotesMode()" style="
+                background: ${gameState.notesMode ? 'linear-gradient(135deg, #8b5cf6, #7c3aed)' : 'rgba(139,92,246,0.3)'};
+                color: white;
+                padding: 12px;
+                border: none;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: bold;
+                cursor: pointer;
+                width: 100%;
+                margin-bottom: 10px;
+              ">${gameState.notesMode ? '✓ Notas ON' : '○ Notas OFF'}</button>
+              
+              <button onclick="leaveBattleRoyaleDuringGame()" style="
+                background: rgba(239,68,68,0.6);
+                color: white;
+                padding: 12px;
+                border: none;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: bold;
+                cursor: pointer;
+                width: 100%;
+              ">🚪 Rendirse</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Renderizar tablero
+    renderBoard();
+    
+    // Iniciar temporizador de eliminación
+    startEliminationTimer();
+    
+  } catch (error) {
+    console.error('Error rendering battle royale game:', error);
+    showNotification('❌ Error al cargar juego');
+  }
+}
+
+// Input de número en Battle Royale
+async function inputBattleRoyaleNumber(num) {
+  if (!gameState.selectedCell || !gameState.currentPuzzle) {
+    showNotification('❌ Selecciona una celda primero');
+    return;
+  }
+  
+  if (!gameState.battleRoyale.isAlive) {
+    showNotification('💀 Has sido eliminado');
+    return;
+  }
+  
+  const [row, col] = gameState.selectedCell;
+  
+  if (gameState.currentPuzzle.puzzle[row][col] !== 0) {
+    showNotification('❌ No puedes modificar celdas fijas');
+    return;
+  }
+  
+  const key = `${row}-${col}`;
+  
+  try {
+    if (gameState.notesMode) {
+      // Modo anotaciones (igual que antes)
+      if (!gameState.notes[key]) gameState.notes[key] = new Set();
+      
+      if (gameState.notes[key].has(num)) {
+        gameState.notes[key].delete(num);
+        if (gameState.notes[key].size === 0) delete gameState.notes[key];
+      } else {
+        gameState.notes[key].add(num);
+      }
+      
+      gameState.sound.note();
+      updateCellAndRelated(row, col);
+      
+    } else {
+      // Modo normal
+      const oldValue = gameState.userBoard[row][col];
+      
+      // Actualizar localmente
+      gameState.userBoard[row][col] = num;
+      if (gameState.notes[key]) delete gameState.notes[key];
+      
+      renderBoard();
+      
+      // Enviar al servidor
+      const response = await SudokuAPI.makeBattleRoyaleMove(
+        gameState.battleRoyale.currentRoomId,
+        { row, col, value: num }
+      );
+      
+      gameState.mistakes = response.mistakes;
+      gameState.battleRoyale.myProgress = response.progress;
+      
+      // Actualizar UI
+      const progressEls = document.querySelectorAll('#my-progress, #my-progress-2');
+      progressEls.forEach(el => { if (el) el.textContent = response.progress; });
+      
+      const mistakesEl = document.getElementById('br-mistakes');
+      if (mistakesEl) mistakesEl.textContent = gameState.mistakes;
+      
+      // Sonido
+      if (!response.isCorrect && num !== 0) {
+        gameState.sound.error();
+      } else if (num !== 0) {
+        gameState.sound.input();
+        cleanRelatedNotes(row, col, num);
+      } else {
+        gameState.sound.click();
+      }
+      
+      // Actualizar progreso en socket
+      if (gameState.battleRoyale.socket) {
+        gameState.battleRoyale.socket.emit('progress-update', {
+          battleRoyaleId: gameState.battleRoyale.currentRoomId,
+          userId: gameState.user.id,
+          progress: response.progress
+        });
+      }
+      
+      // Victoria
+      if (response.completed) {
+        clearInterval(gameState.timerInterval);
+        gameState.sound.complete();
+        // El socket emitirá game-finished
+      }
+      
+      renderBoard();
+    }
+    
+  } catch (error) {
+    console.error('Error in battle royale move:', error);
+    showNotification(`❌ Error: ${error.message}`);
+    
+    // Revertir
+    gameState.userBoard[row][col] = oldValue;
+    renderBoard();
+  }
+}
+
+// Temporizador de eliminación
+function startEliminationTimer() {
+  const timerEl = document.getElementById('elimination-timer');
+  if (!timerEl) return;
+  
+  let secondsUntilElimination = 60;
+  
+  const interval = setInterval(() => {
+    if (gameState.battleRoyale.status !== 'active') {
+      clearInterval(interval);
+      return;
+    }
+    
+    secondsUntilElimination--;
+    
+    if (timerEl) {
+      timerEl.textContent = formatTime(secondsUntilElimination);
+      
+      if (secondsUntilElimination <= 10) {
+        timerEl.style.color = '#ef4444';
+        timerEl.style.animation = 'pulse 1s infinite';
+      }
+    }
+    
+    if (secondsUntilElimination <= 0) {
+      secondsUntilElimination = 60; // Reset
+    }
+  }, 1000);
+}
+
+// Actualizar leaderboard en vivo
+function updateBattleRoyaleLeaderboard() {
+  const leaderboard = document.getElementById('br-live-leaderboard');
+  if (!leaderboard) return;
+  
+  const theme = themes[gameState.theme];
+  
+  leaderboard.innerHTML = gameState.battleRoyale.players
+    .filter(p => p.alive)
+    .sort((a, b) => b.progress - a.progress)
+    .map((player, idx) => `
+      <div style="
+        background: ${player.username === gameState.user.username ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.05)'}; 
+        padding: 12px; 
+        border-radius: 10px; 
+        margin-bottom: 8px;
+        ${player.username === gameState.user.username ? 'border: 2px solid #f59e0b;' : ''}
+      ">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="font-weight: bold; color: ${idx < 3 ? '#fbbf24' : theme.text}; min-width: 25px;">
+            #${idx + 1}
+          </div>
+          <div style="font-size: 20px;">${player.avatar}</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="color: ${theme.text}; font-size: 14px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${player.username}
+            </div>
+            <div style="color: ${theme.text}; opacity: 0.7; font-size: 12px;">
+              ${player.progress}% • ❌${player.mistakes}
+            </div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+}
+
+// Pantalla de eliminación
+function showBattleRoyaleEliminatedScreen(playersRemaining) {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  clearInterval(gameState.timerInterval);
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: linear-gradient(135deg, #dc2626, #991b1b); display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="max-width: 600px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 60px; text-align: center; color: white;">
+        <div style="font-size: 120px; margin-bottom: 30px;">💀</div>
+        <h1 style="font-size: 48px; font-weight: bold; margin-bottom: 20px;">¡Eliminado!</h1>
+        <div style="font-size: 24px; opacity: 0.9; margin-bottom: 40px;">
+          No alcanzaste el progreso necesario
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 40px;">
+          <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px;">
+            <div style="font-size: 40px; font-weight: bold;">${gameState.battleRoyale.myProgress}%</div>
+            <div style="opacity: 0.8; font-size: 14px;">Tu progreso</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px;">
+            <div style="font-size: 40px; font-weight: bold;">${playersRemaining}</div>
+            <div style="opacity: 0.8; font-size: 14px;">Quedan en pie</div>
+          </div>
+        
+        <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
+          <div style="font-size: 18px; margin-bottom: 10px;">⏱️ Sobreviviste</div>
+          <div style="font-size: 32px; font-weight: bold;">${formatTime(gameState.timer)}</div>
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 15px;">
+          <button onclick="showBattleRoyaleMenu()" style="
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+          ">🎮 Volver al Menú</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Pantalla de resultado final
+function showBattleRoyaleResultScreen(isWinner, winnerData) {
+  const theme = themes[gameState.theme];
+  const root = document.getElementById('root');
+  
+  clearInterval(gameState.timerInterval);
+  
+  if (gameState.battleRoyale.socket) {
+    gameState.battleRoyale.socket.disconnect();
+    gameState.battleRoyale.socket = null;
+  }
+  
+  const bgGradient = isWinner ? 
+    'linear-gradient(135deg, #f59e0b, #d97706)' : 
+    'linear-gradient(135deg, #8b5cf6, #7c3aed)';
+  
+  root.innerHTML = `
+    <div style="height: 100vh; background: ${bgGradient}; display: flex; align-items: center; justify-content: center; padding: 40px;">
+      <div style="max-width: 700px; width: 100%; background: rgba(255,255,255,0.1); backdrop-filter: blur(20px); border-radius: 30px; padding: 60px; text-align: center; color: white;">
+        <div style="font-size: 120px; margin-bottom: 30px; animation: bounce 1s;">
+          ${isWinner ? '🏆' : '🥈'}
+        </div>
+        
+        <h1 style="font-size: 60px; font-weight: bold; margin-bottom: 20px;">
+          ${isWinner ? '¡Victoria!' : '¡Batalla Terminada!'}
+        </h1>
+        
+        <div style="font-size: 24px; opacity: 0.9; margin-bottom: 40px;">
+          ${isWinner ? 
+            '¡Eres el último en pie!' : 
+            `${winnerData.username} ganó la batalla`
+          }
+        </div>
+        
+        <!-- Estadísticas del ganador -->
+        <div style="background: rgba(255,255,255,0.1); padding: 25px; border-radius: 20px; margin-bottom: 30px;">
+          <h3 style="margin-bottom: 20px; font-size: 20px;">🏆 Ganador</h3>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Jugador</div>
+              <div style="font-size: 20px; font-weight: bold; margin-top: 5px;">${winnerData.username}</div>
+            </div>
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Tiempo</div>
+              <div style="font-size: 20px; font-weight: bold; margin-top: 5px;">${formatTime(winnerData.time)}</div>
+            </div>
+            <div>
+              <div style="font-size: 14px; opacity: 0.8;">Errores</div>
+              <div style="font-size: 20px; font-weight: bold; margin-top: 5px;">${winnerData.mistakes}</div>
+            </div>
+          </div>
+        </div>
+        
+        ${!isWinner ? `
+          <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; margin-bottom: 30px;">
+            <h3 style="margin-bottom: 15px;">📊 Tus Estadísticas</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+              <div>
+                <div style="font-size: 14px; opacity: 0.8;">Progreso</div>
+                <div style="font-size: 32px; font-weight: bold;">${gameState.battleRoyale.myProgress}%</div>
+              </div>
+              <div>
+                <div style="font-size: 14px; opacity: 0.8;">Errores</div>
+                <div style="font-size: 32px; font-weight: bold;">${gameState.mistakes}</div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+        
+        <div style="display: flex; flex-direction: column; gap: 15px;">
+          <button onclick="showBattleRoyaleMenu()" style="
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+          ">🎮 Volver al Menú</button>
+          
+          <button onclick="renderMenu()" style="
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 20px 40px;
+            border: none;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+          ">🏠 Menú Principal</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Rendirse durante el juego
+async function leaveBattleRoyaleDuringGame() {
+  if (confirm('¿Seguro que quieres rendirte? Serás eliminado.')) {
+    try {
+      gameState.battleRoyale.isAlive = false;
+      
+      await SudokuAPI.leaveBattleRoyale(gameState.battleRoyale.currentRoomId);
+      
+      if (gameState.battleRoyale.socket) {
+        gameState.battleRoyale.socket.disconnect();
+        gameState.battleRoyale.socket = null;
+      }
+      
+      clearInterval(gameState.timerInterval);
+      
+      showNotification('👋 Te rendiste');
+      showBattleRoyaleMenu();
+      
+    } catch (error) {
+      console.error('Error leaving battle royale:', error);
+      showNotification('❌ Error al salir');
+    }
+  }
 }
 
 // Inicializar la aplicación
